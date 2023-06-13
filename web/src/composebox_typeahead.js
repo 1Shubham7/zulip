@@ -204,7 +204,6 @@ function handle_keydown(e) {
             target_sel = `#${CSS.escape(e.target.id)}`;
         }
 
-        const on_stream = target_sel === "#stream_message_recipient_stream";
         const on_topic = target_sel === "#stream_message_recipient_topic";
         const on_pm = target_sel === "#private_message_recipient";
         const on_compose = target_sel === "#compose-textarea";
@@ -223,6 +222,7 @@ function handle_keydown(e) {
                     // button" after sending the message, preventing
                     // typing a next message!
                     $("#compose-send-button").trigger("focus");
+
                     e.preventDefault();
                     e.stopPropagation();
                 }
@@ -241,15 +241,9 @@ function handle_keydown(e) {
 
                 handle_enter($("#compose-textarea"), e);
             }
-        } else if (on_stream || on_topic || on_pm) {
+        } else if (on_topic || on_pm) {
             // We are doing the focusing on keyup to not abort the typeahead.
-            if (on_stream) {
-                $nextFocus = $("#stream_message_recipient_topic");
-            } else if (on_topic) {
-                $nextFocus = $("#compose-textarea");
-            } else if (on_pm) {
-                $nextFocus = $("#compose-textarea");
-            }
+            $nextFocus = $("#compose-textarea");
         }
     }
 }
@@ -393,27 +387,20 @@ function should_show_custom_query(query, items) {
     return !matched;
 }
 
-export const slash_commands = [
+export const dev_only_slash_commands = [
     {
         text: $t({defaultMessage: "/dark (Switch to the dark theme)"}),
         name: "dark",
         aliases: "night",
     },
     {
-        text: $t({defaultMessage: "/fixed-width (Toggle fixed width mode)"}),
-        name: "fixed-width",
-        aliases: "",
-    },
-    {
-        text: $t({defaultMessage: "/fluid-width (Toggle fluid width mode)"}),
-        name: "fluid-width",
-        aliases: "",
-    },
-    {
         text: $t({defaultMessage: "/light (Switch to light theme)"}),
         name: "light",
         aliases: "day",
     },
+];
+
+export const slash_commands = [
     {
         text: $t({defaultMessage: "/me is excited (Display action text)"}),
         name: "me",
@@ -431,6 +418,8 @@ export const slash_commands = [
         aliases: "",
     },
 ];
+
+export const all_slash_commands = [...dev_only_slash_commands, ...slash_commands];
 
 export function filter_and_sort_mentions(is_silent, query, opts) {
     opts = {
@@ -673,7 +662,7 @@ export function get_candidates(query) {
     }
 
     function get_slash_commands_data() {
-        const commands = slash_commands;
+        const commands = page_params.development_environment ? all_slash_commands : slash_commands;
         return commands;
     }
 
@@ -832,7 +821,7 @@ export function content_typeahead_selected(item, event) {
                 );
                 beginning += mention_text + " ";
                 if (!is_silent) {
-                    compose_validate.warn_if_mentioning_unsubscribed_user(item);
+                    compose_validate.warn_if_mentioning_unsubscribed_user(item, $textbox);
                 }
             }
             break;
@@ -859,7 +848,7 @@ export function content_typeahead_selected(item, event) {
             } else {
                 beginning += "** ";
             }
-            compose_validate.warn_if_private_stream_is_linked(item);
+            compose_validate.warn_if_private_stream_is_linked(item, $textbox);
             break;
         case "syntax": {
             // Isolate the end index of the triple backticks/tildes, including
@@ -1094,24 +1083,6 @@ export function initialize() {
     // These handlers are at the "form" level so that they are called after typeahead
     $("form#send_message_form").on("keydown", handle_keydown);
     $("form#send_message_form").on("keyup", handle_keyup);
-
-    // limit number of items so the list doesn't fall off the screen
-    $("#stream_message_recipient_stream").typeahead({
-        source() {
-            return stream_data.subscribed_streams();
-        },
-        items: 3,
-        fixed: true,
-        highlighter(item) {
-            return typeahead_helper.render_typeahead_item({primary: item});
-        },
-        matcher(item) {
-            // The matcher for "stream" is strictly prefix-based,
-            // because we want to avoid mixing up streams.
-            const q = this.query.trim().toLowerCase();
-            return item.toLowerCase().startsWith(q);
-        },
-    });
 
     $("#stream_message_recipient_topic").typeahead({
         source() {

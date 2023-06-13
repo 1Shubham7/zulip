@@ -8,10 +8,11 @@
 import json
 import os
 import re
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union, cast
 
 import orjson
 from openapi_core import Spec, openapi_request_validator, openapi_response_validator
+from openapi_core.protocols import Response
 from openapi_core.testing import MockRequest, MockResponse
 from openapi_core.validation.exceptions import ValidationError as OpenAPIValidationError
 
@@ -102,7 +103,7 @@ class OpenAPISpec:
 
             openapi = yaml.load(f, Loader=yaml.CSafeLoader)
 
-        spec = Spec.create(openapi)
+        spec = Spec.from_dict(openapi)
         self._spec = spec
         self._openapi = naively_merge_allOf_dict(JsonRef.replace_refs(openapi))
         self.create_endpoints_dict()
@@ -346,10 +347,6 @@ def find_openapi_endpoint(path: str) -> Optional[str]:
     return None
 
 
-def get_event_type(event: Dict[str, Any]) -> str:
-    return event["type"] + ":" + event.get("op", "")
-
-
 def fix_events(content: Dict[str, Any]) -> None:
     """Remove undocumented events from events array. This is a makeshift
     function so that further documentation of `/events` can happen with
@@ -359,24 +356,6 @@ def fix_events(content: Dict[str, Any]) -> None:
     # 'user' is deprecated so remove its occurrences from the events array
     for event in content["events"]:
         event.pop("user", None)
-
-
-def prune_type_schema_by_type(schema: Dict[str, Any], type: str) -> bool:
-    return ("enum" in schema and type not in schema["enum"]) or (
-        "allOf" in schema
-        and any(prune_type_schema_by_type(subschema, type) for subschema in schema["allOf"])
-    )
-
-
-def prune_schema_by_type(schema: Dict[str, Any], type: str) -> bool:
-    return (
-        "properties" in schema
-        and "type" in schema["properties"]
-        and prune_type_schema_by_type(schema["properties"]["type"], type)
-    ) or (
-        "allOf" in schema
-        and any(prune_schema_by_type(subschema, type) for subschema in schema["allOf"])
-    )
 
 
 def validate_against_openapi_schema(
@@ -407,12 +386,12 @@ def validate_against_openapi_schema(
     if (endpoint, method) in EXCLUDE_UNDOCUMENTED_ENDPOINTS:
         return False
     # Return true for endpoints with only response documentation remaining
-    if (endpoint, method) in EXCLUDE_DOCUMENTED_ENDPOINTS:
+    if (endpoint, method) in EXCLUDE_DOCUMENTED_ENDPOINTS:  # nocoverage
         return True
     # Check if the response matches its code
     if status_code.startswith("2") and (
         content.get("result", "success").lower() not in ["success", "partially_completed"]
-    ):
+    ):  # nocoverage
         raise SchemaError("Response is not 200 but is validating against 200 schema")
     # Code is not declared but appears in various 400 responses. If
     # common, it can be added to 400 response schema
@@ -435,7 +414,9 @@ def validate_against_openapi_schema(
         orjson.dumps(content).decode(),
         status_code=int(status_code),
     )
-    result = openapi_response_validator.validate(openapi_spec.spec(), mock_request, mock_response)
+    result = openapi_response_validator.validate(
+        openapi_spec.spec(), mock_request, cast(Response, mock_response)
+    )
     try:
         result.raise_for_errors()
     except OpenAPIValidationError as error:
@@ -555,5 +536,5 @@ See https://zulip.readthedocs.io/en/latest/documentation/api.html for help.
 
 The errors logged by the OpenAPI validator are below:\n"""
     for error in errors:
-        msg += f"* {str(error)}\n"
+        msg += f"* {error}\n"
     raise SchemaError(msg)

@@ -18,10 +18,10 @@ import * as resize from "./resize";
 import * as settings_data from "./settings_data";
 import * as stream_bar from "./stream_bar";
 import * as stream_color from "./stream_color";
-import * as stream_data from "./stream_data";
 import * as stream_settings_ui from "./stream_settings_ui";
 import * as sub_store from "./sub_store";
 import * as ui_report from "./ui_report";
+import * as ui_util from "./ui_util";
 import * as unread_ops from "./unread_ops";
 // We handle stream popovers and topic popovers in this
 // module.  Both are popped up from the left sidebar.
@@ -94,7 +94,7 @@ function stream_popover_sub(e) {
     const stream_id = elem_to_stream_id($elem);
     const sub = sub_store.get(stream_id);
     if (!sub) {
-        blueslip.error("Unknown stream: " + stream_id);
+        blueslip.error("Unknown stream", {stream_id});
         return undefined;
     }
     return sub;
@@ -165,25 +165,38 @@ function build_stream_popover(opts) {
     show_left_sidebar_menu_icon(elt);
 }
 
-export function build_move_topic_to_stream_popover(current_stream_id, topic_name, message) {
-    const current_stream_name = stream_data.maybe_get_stream_name(current_stream_id);
+export function build_move_topic_to_stream_popover(
+    current_stream_id,
+    topic_name,
+    only_topic_edit,
+    message,
+) {
+    const current_stream_name = sub_store.maybe_get_stream_name(current_stream_id);
     const args = {
         topic_name,
         current_stream_id,
         notify_new_thread: message_edit.notify_new_thread_default,
         notify_old_thread: message_edit.notify_old_thread_default,
         from_message_actions_popover: message !== undefined,
+        only_topic_edit,
     };
 
     // When the modal is opened for moving the whole topic from left sidebar,
     // we do not have any message object and so we disable the stream input
-    // based on the move_messages_between_streams_policy setting. In other
-    // cases message row, message object is available and thus we check
-    // the time-based permissions as well in the below if block to enable or
-    // disable the stream input.
+    // based on the move_messages_between_streams_policy setting and topic
+    // input based on edit_topic_policy. In other cases, message object is
+    // available and thus we check the time-based permissions as well in the
+    // below if block to enable or disable the stream and topic input.
     let disable_stream_input = !settings_data.user_can_move_messages_between_streams();
+    args.disable_topic_input = !settings_data.user_can_move_messages_to_another_topic();
 
-    let modal_heading = $t_html({defaultMessage: "Move topic"});
+    let modal_heading;
+    if (only_topic_edit) {
+        modal_heading = $t_html({defaultMessage: "Rename topic"});
+    } else {
+        modal_heading = $t_html({defaultMessage: "Move topic"});
+    }
+
     if (message !== undefined) {
         modal_heading = $t_html({defaultMessage: "Move messages"});
         // We disable topic input only for modal is opened from the message actions
@@ -193,8 +206,18 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
         // topic is fetched from the server after clicking submit.
         // Though, this will be changed soon as we are going to make topic
         // edit permission independent of message.
-        args.disable_topic_input = !message_edit.is_topic_editable(message);
-        disable_stream_input = !message_edit.is_stream_editable(message);
+
+        // We potentially got to this function by clicking a button that implied the
+        // user would be able to move their message.  Give a little bit of buffer in
+        // case the button has been around for a bit, e.g. we show the
+        // move_message_button (hovering plus icon) as long as the user would have
+        // been able to click it at the time the mouse entered the message_row. Also
+        // a buffer in case their computer is slow, or stalled for a second, etc
+        // If you change this number also change edit_limit_buffer in
+        // zerver.actions.message_edit.check_update_message
+        const move_limit_buffer = 5;
+        args.disable_topic_input = !message_edit.is_topic_editable(message, move_limit_buffer);
+        disable_stream_input = !message_edit.is_stream_editable(message, move_limit_buffer);
     }
 
     function get_params_from_form() {
@@ -224,7 +247,12 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
         const params = get_params_from_form();
 
         const {old_topic_name} = params;
-        let select_stream_id = stream_widget.value();
+        let select_stream_id;
+        if (only_topic_edit) {
+            select_stream_id = undefined;
+        } else {
+            select_stream_id = stream_widget.value();
+        }
 
         let {
             current_stream_id,
@@ -297,7 +325,7 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
     }
 
     function set_stream_topic_typeahead() {
-        const $topic_input = $("#move_topic_form .inline_topic_edit");
+        const $topic_input = $("#move_topic_form .move_messages_edit_topic");
         const new_stream_id = Number(stream_widget.value(), 10);
         const new_stream_name = sub_store.get(new_stream_id).name;
         $topic_input.data("typeahead").unlisten();
@@ -310,11 +338,29 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
     }
 
     function move_topic_post_render() {
-        const $topic_input = $("#move_topic_form .inline_topic_edit");
+        $("#move_topic_modal .dialog_submit_button").prop("disabled", true);
+
+        const $topic_input = $("#move_topic_form .move_messages_edit_topic");
+        composebox_typeahead.initialize_topic_edit_typeahead(
+            $topic_input,
+            current_stream_name,
+            false,
+        );
+
+        if (only_topic_edit) {
+            // Set select_stream_id to current_stream_id since we user is not allowed
+            // to edit stream in topic-edit only UI.
+            const select_stream_id = current_stream_id;
+            $topic_input.on("input", () => {
+                update_submit_button_disabled_state(select_stream_id);
+            });
+            return;
+        }
+
         $stream_header_colorblock = $("#dialog_widget_modal .topic_stream_edit_header").find(
             ".stream_header_colorblock",
         );
-        stream_bar.decorate(current_stream_name, $stream_header_colorblock, false);
+        stream_bar.decorate(current_stream_name, $stream_header_colorblock);
         const streams_list =
             message_edit.get_available_streams_for_moving_messages(current_stream_id);
         const opts = {
@@ -327,19 +373,20 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
         };
         stream_widget = new DropdownListWidget(opts);
 
-        composebox_typeahead.initialize_topic_edit_typeahead(
-            $topic_input,
-            current_stream_name,
-            false,
-        );
-
         stream_widget.setup();
 
         $("#select_stream_widget .dropdown-toggle").prop("disabled", disable_stream_input);
-        update_submit_button_disabled_state(stream_widget.value());
-        $("#move_topic_modal .inline_topic_edit").on("input", () => {
+        $("#move_topic_modal .move_messages_edit_topic").on("input", () => {
             update_submit_button_disabled_state(stream_widget.value());
         });
+    }
+
+    function focus_on_move_modal_render() {
+        if (!disable_stream_input && args.disable_topic_input) {
+            $("#select_stream_widget .button").trigger("focus");
+        } else {
+            ui_util.place_caret_at_end($(".move_messages_edit_topic")[0]);
+        }
     }
 
     dialog_widget.launch({
@@ -349,6 +396,7 @@ export function build_move_topic_to_stream_popover(current_stream_id, topic_name
         id: "move_topic_modal",
         on_click: move_topic,
         loading_spinner: true,
+        on_shown: focus_on_move_modal_render,
         post_render: move_topic_post_render,
     });
 }
@@ -375,11 +423,11 @@ export function register_click_handlers() {
         if (e.type === "keypress" && !keydown_util.is_enter_event(e)) {
             return;
         }
-        const stream_name = stream_data.maybe_get_stream_name(
+        const stream_name = sub_store.maybe_get_stream_name(
             Number.parseInt(stream_widget.value(), 10),
         );
 
-        stream_bar.decorate(stream_name, $stream_header_colorblock, false);
+        stream_bar.decorate(stream_name, $stream_header_colorblock);
     });
 
     register_stream_handlers();

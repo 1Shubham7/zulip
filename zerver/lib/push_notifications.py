@@ -18,7 +18,6 @@ from django.utils.timezone import now as timezone_now
 from django.utils.translation import gettext as _
 from django.utils.translation import override as override_language
 
-from zerver.decorator import statsd_increment
 from zerver.lib.avatar import absolute_avatar_url
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.message import access_message, huddle_users
@@ -180,7 +179,6 @@ def modernize_apns_payload(data: Mapping[str, Any]) -> Mapping[str, Any]:
 APNS_MAX_RETRIES = 3
 
 
-@statsd_increment("apple_push_notification")
 def send_apple_push_notification(
     user_identity: UserPushIdentityCompat,
     devices: Sequence[DeviceToken],
@@ -357,7 +355,6 @@ def parse_gcm_options(options: Dict[str, Any], data: Dict[str, Any]) -> str:
     return priority  # when this grows a second option, can make it a tuple
 
 
-@statsd_increment("android_push_notification")
 def send_android_push_notification(
     user_identity: UserPushIdentityCompat,
     devices: Sequence[DeviceToken],
@@ -547,6 +544,9 @@ def add_push_device_token(
         post_data = {
             "server_uuid": settings.ZULIP_ORG_ID,
             "user_uuid": str(user_profile.uuid),
+            # user_id is sent so that the bouncer can delete any pre-existing registrations
+            # for this user+device to avoid duplication upon adding the uuid registration.
+            "user_id": str(user_profile.id),
             "token": token_str,
             "token_kind": kind,
         }
@@ -1033,7 +1033,6 @@ def handle_remove_push_notification(user_profile_id: int, message_ids: List[int]
         ).update(flags=F("flags").bitand(~UserMessage.flags.active_mobile_push_notification))
 
 
-@statsd_increment("push_notifications")
 def handle_push_notification(user_profile_id: int, missed_message: Dict[str, Any]) -> None:
     """
     missed_message is the event received by the
@@ -1061,42 +1060,45 @@ def handle_push_notification(user_profile_id: int, missed_message: Dict[str, Any
         # BUG: Investigate why it's possible to get here.
         return  # nocoverage
 
-    try:
-        (message, user_message) = access_message(user_profile, missed_message["message_id"])
-    except JsonableError:
-        if ArchivedMessage.objects.filter(id=missed_message["message_id"]).exists():
-            # If the cause is a race with the message being deleted,
-            # that's normal and we have no need to log an error.
-            return
-        logging.info(
-            "Unexpected message access failure handling push notifications: %s %s",
-            user_profile.id,
-            missed_message["message_id"],
-        )
-        return
-
-    if user_message is not None:
-        # If the user has read the message already, don't push-notify.
-        if user_message.flags.read or user_message.flags.active_mobile_push_notification:
-            return
-
-        # Otherwise, we mark the message as having an active mobile
-        # push notification, so that we can send revocation messages
-        # later.
-        user_message.flags.active_mobile_push_notification = True
-        user_message.save(update_fields=["flags"])
-    else:
-        # Users should only be getting push notifications into this
-        # queue for messages they haven't received if they're
-        # long-term idle; anything else is likely a bug.
-        if not user_profile.long_term_idle:
-            logger.error(
-                "Could not find UserMessage with message_id %s and user_id %s",
+    with transaction.atomic(savepoint=False):
+        try:
+            (message, user_message) = access_message(
+                user_profile, missed_message["message_id"], lock_message=True
+            )
+        except JsonableError:
+            if ArchivedMessage.objects.filter(id=missed_message["message_id"]).exists():
+                # If the cause is a race with the message being deleted,
+                # that's normal and we have no need to log an error.
+                return
+            logging.info(
+                "Unexpected message access failure handling push notifications: %s %s",
+                user_profile.id,
                 missed_message["message_id"],
-                user_profile_id,
-                exc_info=True,
             )
             return
+
+        if user_message is not None:
+            # If the user has read the message already, don't push-notify.
+            if user_message.flags.read or user_message.flags.active_mobile_push_notification:
+                return
+
+            # Otherwise, we mark the message as having an active mobile
+            # push notification, so that we can send revocation messages
+            # later.
+            user_message.flags.active_mobile_push_notification = True
+            user_message.save(update_fields=["flags"])
+        else:
+            # Users should only be getting push notifications into this
+            # queue for messages they haven't received if they're
+            # long-term idle; anything else is likely a bug.
+            if not user_profile.long_term_idle:
+                logger.error(
+                    "Could not find UserMessage with message_id %s and user_id %s",
+                    missed_message["message_id"],
+                    user_profile_id,
+                    exc_info=True,
+                )
+                return
 
     trigger = missed_message["trigger"]
     mentioned_user_group_name = None

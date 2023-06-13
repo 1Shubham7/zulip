@@ -182,9 +182,12 @@ def process_new_human_user(
         streams = []
         acting_user = None
 
-    # If the user's invitation didn't explicitly list some streams, we
-    # add the default streams
-    if len(streams) == 0:
+    user_was_invited = prereg_user is not None and (
+        prereg_user.referred_by is not None or prereg_user.multiuse_invite is not None
+    )
+    # If the Preregistration object didn't explicitly list some streams (it happens when user
+    # directly signs up without any invitation), we add the default streams
+    if len(streams) == 0 and not user_was_invited:
         streams = get_default_subs(user_profile)
 
     for default_stream_group in default_stream_groups:
@@ -252,9 +255,9 @@ def process_new_human_user(
 
     # We have an import loop here; it's intentional, because we want
     # to keep all the onboarding code in zerver/lib/onboarding.py.
-    from zerver.lib.onboarding import send_initial_pms
+    from zerver.lib.onboarding import send_initial_direct_message
 
-    send_initial_pms(user_profile)
+    send_initial_direct_message(user_profile)
 
 
 def notify_created_user(user_profile: UserProfile) -> None:

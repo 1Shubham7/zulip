@@ -846,7 +846,7 @@ Output:
             if any(
                 addr == email_address or addr.endswith(f" <{email_address}>") for addr in message.to
             ):
-                match = re.search(url_pattern, message.body)
+                match = re.search(url_pattern, str(message.body))
                 assert match is not None
 
                 if email_subject_contains:
@@ -1065,7 +1065,7 @@ Output:
     have decided to send a message to a stream without the sender being
     subscribed.
 
-    Please do self.subscribe(<user for {sender.full_name}>, {repr(stream_name)}) first.
+    Please do self.subscribe(<user for {sender.full_name}>, {stream_name!r}) first.
 
     Or choose a stream that the user is already subscribed to:
 
@@ -1171,7 +1171,7 @@ Output:
             for item in items:
                 print(item)
             print(f"\nexpected length: {count}\nactual length: {actual_count}")
-            raise AssertionError(f"{str(type(items))} is of unexpected size!")
+            raise AssertionError(f"{type(items)} is of unexpected size!")
 
     @contextmanager
     def assert_database_query_count(
@@ -1189,7 +1189,7 @@ Output:
         if actual_count != count:  # nocoverage
             print("\nITEMS:\n")
             for index, query in enumerate(queries):
-                print(f"#{index + 1}\nsql: {str(query['sql'])}\ntime: {query['time']}\n")
+                print(f"#{index + 1}\nsql: {query.sql}\ntime: {query.time}\n")
             print(f"expected count: {count}\nactual count: {actual_count}")
             raise AssertionError(
                 f"""
@@ -1455,7 +1455,7 @@ Output:
         This raises a failure inside of the try/except block of
         markdown.__init__.do_convert.
         """
-        with self.settings(ERROR_BOT=None), mock.patch(
+        with mock.patch(
             "zerver.lib.markdown.timeout", side_effect=subprocess.CalledProcessError(1, [])
         ), self.assertLogs(
             level="ERROR"

@@ -38,7 +38,7 @@ from zerver.actions.realm_settings import (
 from zerver.actions.users import change_user_is_active, do_change_user_role, do_deactivate_user
 from zerver.decorator import do_two_factor_login
 from zerver.forms import HomepageForm, check_subdomain_available
-from zerver.lib.email_notifications import enqueue_welcome_emails, followup_day2_email_delay
+from zerver.lib.email_notifications import enqueue_welcome_emails
 from zerver.lib.i18n import get_default_language_for_new_user
 from zerver.lib.initial_password import initial_password
 from zerver.lib.mobile_auth_otp import (
@@ -50,7 +50,6 @@ from zerver.lib.mobile_auth_otp import (
     xor_hex_strings,
 )
 from zerver.lib.name_restrictions import is_disposable_domain
-from zerver.lib.rate_limiter import add_ratelimit_rule, remove_ratelimit_rule
 from zerver.lib.send_email import (
     EmailNotDeliveredError,
     FromAddress,
@@ -70,6 +69,7 @@ from zerver.lib.test_helpers import (
     message_stream_count,
     most_recent_message,
     most_recent_usermessage,
+    ratelimit_rule,
     reset_email_visibility_to_everyone_in_zulip_realm,
 )
 from zerver.models import (
@@ -372,7 +372,7 @@ class PasswordResetTest(ZulipTestCase):
         )
         self.assertIn(f"{subdomain}.testserver", message.extra_headers["List-Id"])
 
-        return message.body
+        return str(message.body)
 
     def test_password_reset(self) -> None:
         user = self.example_user("hamlet")
@@ -586,13 +586,12 @@ class PasswordResetTest(ZulipTestCase):
 
         self.assert_length(outbox, 0)
 
-    @override_settings(RATE_LIMITING=True)
+    @ratelimit_rule(10, 2, domain="password_reset_form_by_email")
     def test_rate_limiting(self) -> None:
         user_profile = self.example_user("hamlet")
         email = user_profile.delivery_email
         from django.core.mail import outbox
 
-        add_ratelimit_rule(10, 2, domain="password_reset_form_by_email")
         start_time = time.time()
         with patch("time.time", return_value=start_time):
             self.client_post("/accounts/password/reset/", {"email": email})
@@ -621,8 +620,6 @@ class PasswordResetTest(ZulipTestCase):
             self.client_post("/accounts/password/reset/", {"email": email})
             self.client_post("/accounts/password/reset/", {"email": email})
             self.assert_length(outbox, 6)
-
-        remove_ratelimit_rule(10, 2, domain="password_reset_form_by_email")
 
     def test_wrong_subdomain(self) -> None:
         email = self.example_email("hamlet")
@@ -758,7 +755,9 @@ class PasswordResetTest(ZulipTestCase):
         result = self.client_get("/accounts/send_confirm/?email=alice@example.com")
         self.assert_in_success_response(["/accounts/home/"], result)
 
-        result = self.client_get("/accounts/new/send_confirm/?email=alice@example.com")
+        result = self.client_get(
+            "/accounts/new/send_confirm/?email=alice@example.com&realm_name=Zulip+test&realm_type=10&realm_subdomain=zuliptest"
+        )
         self.assert_in_success_response(["/new/"], result)
 
     def test_password_reset_for_soft_deactivated_user(self) -> None:
@@ -835,10 +834,10 @@ class LoginTest(ZulipTestCase):
         self.assert_logged_in_user_id(user.id)
 
     @override_settings(RATE_LIMITING_AUTHENTICATE=True)
+    @ratelimit_rule(10, 2, domain="authenticate_by_username")
     def test_login_bad_password_rate_limiter(self) -> None:
         user_profile = self.example_user("hamlet")
         email = user_profile.delivery_email
-        add_ratelimit_rule(10, 2, domain="authenticate_by_username")
 
         start_time = time.time()
         with patch("time.time", return_value=start_time):
@@ -856,8 +855,6 @@ class LoginTest(ZulipTestCase):
         with patch("time.time", return_value=start_time + 11):
             self.login_with_return(email)
             self.assert_logged_in_user_id(user_profile.id)
-
-        remove_ratelimit_rule(10, 2, domain="authenticate_by_username")
 
     def test_login_with_old_weak_password_after_hasher_change(self) -> None:
         user_profile = self.example_user("hamlet")
@@ -939,7 +936,7 @@ class LoginTest(ZulipTestCase):
         ContentType.objects.clear_cache()
 
         # Ensure the number of queries we make is not O(streams)
-        with self.assert_database_query_count(94), cache_tries_captured() as cache_tries:
+        with self.assert_database_query_count(102), cache_tries_captured() as cache_tries:
             with self.captureOnCommitCallbacks(execute=True):
                 self.register(self.nonreg_email("test"), "test")
 
@@ -1049,7 +1046,7 @@ class LoginTest(ZulipTestCase):
         """
         self.login("cordelia")
         response = self.client_get("/login/")
-        self.assertEqual(response["Location"], "http://zulip.testserver")
+        self.assertEqual(response["Location"], "http://zulip.testserver/")
 
     def test_options_request_to_login_page(self) -> None:
         response = self.client_options("/login/")
@@ -1067,7 +1064,7 @@ class LoginTest(ZulipTestCase):
         self.login_2fa(user_profile)
 
         response = self.client_get("/login/")
-        self.assertEqual(response["Location"], "http://zulip.testserver")
+        self.assertEqual(response["Location"], "http://zulip.testserver/")
 
     def test_start_two_factor_auth(self) -> None:
         request = HostRequestMock()
@@ -1134,9 +1131,9 @@ class EmailUnsubscribeTests(ZulipTestCase):
         click even when logged out to stop receiving them.
         """
         user_profile = self.example_user("hamlet")
-        # Simulate a new user signing up, which enqueues 2 welcome e-mails.
+        # Simulate a new user signing up, which enqueues 3 welcome e-mails.
         enqueue_welcome_emails(user_profile)
-        self.assertEqual(2, ScheduledEmail.objects.filter(users=user_profile).count())
+        self.assertEqual(3, ScheduledEmail.objects.filter(users=user_profile).count())
 
         # Simulate unsubscribing from the welcome e-mails.
         unsubscribe_link = one_click_unsubscribe_link(user_profile, "welcome")
@@ -1266,7 +1263,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(org_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1401,7 +1398,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1447,7 +1444,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1496,7 +1493,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1543,7 +1540,7 @@ class RealmCreationTest(ZulipTestCase):
         password = "test"
         string_id = "zuliptest"
         email = "user1@test.com"
-        realm_name = "Test"
+        realm_name = "Zulip test"
 
         # Make sure the realm does not exist
         with self.assertRaises(Realm.DoesNotExist):
@@ -1551,12 +1548,12 @@ class RealmCreationTest(ZulipTestCase):
 
         # Create new realm with the email
         result = self.submit_realm_creation_form(
-            email, realm_subdomain=string_id, realm_name="Zulip test"
+            email, realm_subdomain=string_id, realm_name=realm_name
         )
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1588,20 +1585,20 @@ class RealmCreationTest(ZulipTestCase):
         self.assertFalse(user.enable_marketing_emails)
 
     @override_settings(OPEN_REALM_CREATION=True)
-    def test_create_regular_realm_welcome_bot_pm(self) -> None:
+    def test_create_regular_realm_welcome_bot_direct_message(self) -> None:
         password = "test"
         string_id = "zuliptest"
         email = "user1@test.com"
         realm_name = "Test"
 
-        # Create new realm with the email
+        # Create new realm with the email.
         result = self.submit_realm_creation_form(
             email, realm_subdomain=string_id, realm_name=realm_name
         )
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1621,28 +1618,36 @@ class RealmCreationTest(ZulipTestCase):
         )
         self.assertEqual(result.status_code, 302)
 
-        # Make sure the correct Welcome Bot PM is sent
+        # Make sure the correct Welcome Bot direct message is sent.
         welcome_msg = Message.objects.filter(
             sender__email="welcome-bot@zulip.com", recipient__type=Recipient.PERSONAL
         ).latest("id")
         self.assertTrue(welcome_msg.content.startswith("Hello, and welcome to Zulip!"))
+
+        # Organization type is not education or education_nonprofit,
+        # and organization is not a demo organization.
+        self.assertIn("Getting started guide", welcome_msg.content)
+        self.assertNotIn("Using Zulip for a class guide", welcome_msg.content)
         self.assertNotIn("demo organization", welcome_msg.content)
 
     @override_settings(OPEN_REALM_CREATION=True)
-    def test_create_demo_realm_welcome_bot_pm(self) -> None:
+    def test_create_education_demo_organiztion_welcome_bot_direct_message(self) -> None:
         password = "test"
         string_id = "zuliptest"
         email = "user1@test.com"
         realm_name = "Test"
 
-        # Create new realm with the email
+        # Create new realm with the email.
         result = self.submit_realm_creation_form(
-            email, realm_subdomain=string_id, realm_name=realm_name
+            email,
+            realm_subdomain=string_id,
+            realm_name=realm_name,
+            realm_type=Realm.ORG_TYPES["education"]["id"],
         )
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=35&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1659,15 +1664,20 @@ class RealmCreationTest(ZulipTestCase):
             realm_subdomain=string_id,
             realm_name=realm_name,
             enable_marketing_emails=False,
+            realm_type=Realm.ORG_TYPES["education"]["id"],
             is_demo_organization=True,
         )
         self.assertEqual(result.status_code, 302)
 
-        # Make sure the correct Welcome Bot PM is sent
+        # Make sure the correct Welcome Bot direct message is sent.
         welcome_msg = Message.objects.filter(
             sender__email="welcome-bot@zulip.com", recipient__type=Recipient.PERSONAL
         ).latest("id")
         self.assertTrue(welcome_msg.content.startswith("Hello, and welcome to Zulip!"))
+
+        # Organization type is education, and organization is a demo organization.
+        self.assertNotIn("Getting started guide", welcome_msg.content)
+        self.assertIn("Using Zulip for a class guide", welcome_msg.content)
         self.assertIn("demo organization", welcome_msg.content)
 
     @override_settings(OPEN_REALM_CREATION=True, FREE_TRIAL_DAYS=30)
@@ -1687,7 +1697,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(realm_name)}&realm_type=10&realm_subdomain={string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1741,7 +1751,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(first_realm_name)}&realm_type=10&realm_subdomain={first_string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -1755,7 +1765,7 @@ class RealmCreationTest(ZulipTestCase):
         self.assertEqual(result.status_code, 302)
         self.assertTrue(
             result["Location"].endswith(
-                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}"
+                f"/accounts/new/send_confirm/?email={urllib.parse.quote(email)}&realm_name={urllib.parse.quote_plus(second_realm_name)}&realm_type=10&realm_subdomain={second_string_id}"
             )
         )
         result = self.client_get(result["Location"])
@@ -2844,7 +2854,7 @@ class UserSignUpTest(ZulipTestCase):
 
         for message in reversed(outbox):
             if email in message.to:
-                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", message.body)
+                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", str(message.body))
                 assert match is not None
                 [confirmation_url] = match.groups()
                 break
@@ -2932,7 +2942,7 @@ class UserSignUpTest(ZulipTestCase):
 
         for message in reversed(outbox):
             if email in message.to:
-                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", message.body)
+                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", str(message.body))
                 assert match is not None
                 [confirmation_url] = match.groups()
                 break
@@ -2979,6 +2989,88 @@ class UserSignUpTest(ZulipTestCase):
             # shouldn't be a password prompt, but since it uses the
             # EmailAuthBackend, there should be password field here.
             self.assert_in_success_response(["id_password"], result)
+
+    @override_settings(
+        AUTHENTICATION_BACKENDS=(
+            "zproject.backends.SAMLAuthBackend",
+            "zproject.backends.ZulipLDAPAuthBackend",
+            "zproject.backends.ZulipDummyBackend",
+        )
+    )
+    def test_ldap_registration_email_backend_disabled_bypass_attempt(self) -> None:
+        """
+        Tests for the case of LDAP + external auth backend being the ones enabled and
+        a user using the registration page to get a confirmation link and then trying
+        to use it to create a new account with their own email that's not authenticated
+        by either of the backends.
+        """
+        email = "no_such_user_in_ldap@example.com"
+        subdomain = "zulip"
+
+        self.init_default_ldap_database()
+        ldap_user_attr_map = {"full_name": "cn"}
+        full_name = "New LDAP fullname"
+
+        result = self.client_post("/register/", {"email": email}, subdomain=subdomain)
+
+        self.assertEqual(result.status_code, 302)
+        self.assertTrue(
+            result["Location"].endswith(
+                f"/accounts/send_confirm/?email={urllib.parse.quote(email)}"
+            )
+        )
+        result = self.client_get(result["Location"])
+        self.assert_in_response("Check your email", result)
+
+        with self.settings(
+            POPULATE_PROFILE_VIA_LDAP=True,
+            LDAP_APPEND_DOMAIN="zulip.com",
+            AUTH_LDAP_USER_ATTR_MAP=ldap_user_attr_map,
+        ), self.assertLogs("zulip.ldap", level="DEBUG") as ldap_logs, self.assertLogs(
+            level="WARNING"
+        ) as root_logs:
+            # Click confirmation link
+            result = self.submit_reg_form_for_user(
+                email,
+                None,
+                full_name="Ignore",
+                from_confirmation="1",
+                # Pass HTTP_HOST for the target subdomain
+                HTTP_HOST=subdomain + ".testserver",
+            )
+
+            self.assert_in_success_response(
+                ["Enter your account details to complete registration.", email], result
+            )
+
+            # Submit the final form, attempting to register the user despite
+            # no match in ldap.
+            result = self.submit_reg_form_for_user(
+                email,
+                "newpassword",
+                full_name=full_name,
+                # Pass HTTP_HOST for the target subdomain
+                HTTP_HOST=subdomain + ".testserver",
+            )
+            # Didn't create an account
+            with self.assertRaises(UserProfile.DoesNotExist):
+                UserProfile.objects.get(delivery_email=email)
+            self.assertEqual(result.status_code, 302)
+            self.assertEqual(
+                result["Location"], "/accounts/login/?email=no_such_user_in_ldap%40example.com"
+            )
+            self.assertEqual(
+                root_logs.output,
+                [
+                    "WARNING:root:New account email no_such_user_in_ldap@example.com could not be found in LDAP",
+                ],
+            )
+            self.assertEqual(
+                ldap_logs.output,
+                [
+                    "DEBUG:zulip.ldap:ZulipLDAPAuthBackend: Email no_such_user_in_ldap@example.com does not match LDAP domain zulip.com.",
+                ],
+            )
 
     @override_settings(
         AUTHENTICATION_BACKENDS=(
@@ -3657,7 +3749,7 @@ class UserSignUpTest(ZulipTestCase):
 
         for message in reversed(outbox):
             if email in message.to:
-                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", message.body)
+                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", str(message.body))
                 assert match is not None
                 [confirmation_url] = match.groups()
                 break
@@ -3723,7 +3815,7 @@ class UserSignUpTest(ZulipTestCase):
 
         for message in reversed(outbox):
             if email in message.to:
-                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", message.body)
+                match = re.search(settings.EXTERNAL_HOST + r"(\S+)>", str(message.body))
                 assert match is not None
                 [confirmation_url] = match.groups()
                 break
@@ -3962,6 +4054,14 @@ class TestLoginPage(ZulipTestCase):
             self.assertEqual(result.status_code, 302)
             self.assertEqual(result["Location"], "/accounts/go/?next=%2Fupgrade%2F")
 
+    def test_login_page_redirects_using_next_when_already_authenticated(self) -> None:
+        hamlet = self.example_user("hamlet")
+        self.login("hamlet")
+
+        result = self.client_get("/login/", {"next": "/upgrade/"})
+        self.assertEqual(result.status_code, 302)
+        self.assertEqual(result["Location"], f"{hamlet.realm.uri}/upgrade/")
+
     @patch("django.http.HttpRequest.get_host")
     def test_login_page_works_without_subdomains(self, mock_get_host: MagicMock) -> None:
         mock_get_host.return_value = "www.testserver"
@@ -4170,49 +4270,6 @@ class MobileAuthOTPTest(ZulipTestCase):
         self.assertEqual(decrypted, api_key)
 
 
-class FollowupEmailTest(ZulipTestCase):
-    def test_followup_day2_email(self) -> None:
-        user_profile = self.example_user("hamlet")
-        # Test date_joined == Sunday
-        user_profile.date_joined = datetime.datetime(
-            2018, 1, 7, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.assertEqual(
-            followup_day2_email_delay(user_profile), datetime.timedelta(days=2, hours=-1)
-        )
-        # Test date_joined == Tuesday
-        user_profile.date_joined = datetime.datetime(
-            2018, 1, 2, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.assertEqual(
-            followup_day2_email_delay(user_profile), datetime.timedelta(days=2, hours=-1)
-        )
-        # Test date_joined == Thursday
-        user_profile.date_joined = datetime.datetime(
-            2018, 1, 4, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.assertEqual(
-            followup_day2_email_delay(user_profile), datetime.timedelta(days=1, hours=-1)
-        )
-        # Test date_joined == Friday
-        user_profile.date_joined = datetime.datetime(
-            2018, 1, 5, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.assertEqual(
-            followup_day2_email_delay(user_profile), datetime.timedelta(days=3, hours=-1)
-        )
-
-        # Time offset of America/Phoenix is -07:00
-        user_profile.timezone = "America/Phoenix"
-        # Test date_joined == Friday in UTC, but Thursday in the user's time zone
-        user_profile.date_joined = datetime.datetime(
-            2018, 1, 5, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
-        )
-        self.assertEqual(
-            followup_day2_email_delay(user_profile), datetime.timedelta(days=1, hours=-1)
-        )
-
-
 class NoReplyEmailTest(ZulipTestCase):
     def test_noreply_email_address(self) -> None:
         self.assertTrue(
@@ -4270,7 +4327,7 @@ class TwoFactorAuthTest(ZulipTestCase):
             # Going to login page should redirect to '/' if user is already
             # logged in.
             result = self.client_get("/accounts/login/")
-            self.assertEqual(result["Location"], "http://zulip.testserver")
+            self.assertEqual(result["Location"], "http://zulip.testserver/")
 
 
 class NameRestrictionsTest(ZulipTestCase):
@@ -4285,7 +4342,7 @@ class RealmRedirectTest(ZulipTestCase):
 
         result = self.client_post("/accounts/go/", {"subdomain": "zephyr"})
         self.assertEqual(result.status_code, 302)
-        self.assertEqual(result["Location"], "http://zephyr.testserver")
+        self.assertEqual(result["Location"], "http://zephyr.testserver/login/")
 
         result = self.client_post("/accounts/go/", {"subdomain": "invalid"})
         self.assert_in_success_response(["We couldn&#39;t find that Zulip organization."], result)
@@ -4298,4 +4355,4 @@ class RealmRedirectTest(ZulipTestCase):
 
         result = self.client_post("/accounts/go/?next=billing", {"subdomain": "lear"})
         self.assertEqual(result.status_code, 302)
-        self.assertEqual(result["Location"], "http://lear.testserver/billing")
+        self.assertEqual(result["Location"], "http://lear.testserver/login/?next=billing")

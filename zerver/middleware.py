@@ -4,7 +4,7 @@ import tempfile
 import time
 import traceback
 from typing import Any, AnyStr, Callable, Dict, Iterable, List, MutableMapping, Optional, Tuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 from django.conf import settings
 from django.conf.urls.i18n import is_language_prefix_patterns_used
@@ -42,7 +42,6 @@ from zerver.lib.response import (
 )
 from zerver.lib.subdomains import get_subdomain
 from zerver.lib.user_agent import parse_user_agent
-from zerver.lib.utils import statsd
 from zerver.models import Realm, flush_per_request_caches, get_realm
 
 ParamT = ParamSpec("ParamT")
@@ -112,39 +111,12 @@ def format_timedelta(timedelta: float) -> str:
 def is_slow_query(time_delta: float, path: str) -> bool:
     if time_delta < 1.2:
         return False
-    is_exempt = path in [
-        "/activity",
-        "/json/report/error",
-        "/api/v1/deployments/report_error",
-    ] or path.startswith(("/realm_activity/", "/user_activity/"))
+    is_exempt = path == "/activity" or path.startswith(("/realm_activity/", "/user_activity/"))
     if is_exempt:
         return time_delta >= 5
     if "webathena_kerberos" in path:
         return time_delta >= 10
     return True
-
-
-statsd_blacklisted_requests = [
-    "do_confirm",
-    "signup_send_confirm",
-    "new_realm_send_confirm",
-    "eventslast_event_id",
-    "webreq.content",
-    "avatar",
-    "user_uploads",
-    "password.reset",
-    "static",
-    "json.bots",
-    "json.users",
-    "json.streams",
-    "accounts.unsubscribe",
-    "apple-touch-icon",
-    "emoji",
-    "json.bots",
-    "upload_file",
-    "realm_activity",
-    "user_activity",
-]
 
 
 def write_log_line(
@@ -162,24 +134,6 @@ def write_log_line(
     assert error_content is None or error_content_iter is None
     if error_content is not None:
         error_content_iter = (error_content,)
-
-    if settings.STATSD_HOST != "":
-        # For statsd timer name
-        if path == "/":
-            statsd_path = "webreq"
-        else:
-            statsd_path = "webreq.{}".format(path[1:].replace("/", "."))
-            # Remove non-ascii chars from path (there should be none; if there are, it's
-            # because someone manually entered a nonexistent path), as UTF-8 chars make
-            # statsd sad when it sends the key name over the socket
-            statsd_path = statsd_path.encode("ascii", errors="ignore").decode("ascii")
-        # TODO: This could probably be optimized to use a regular expression rather than a loop.
-        suppress_statsd = any(
-            blacklisted in statsd_path for blacklisted in statsd_blacklisted_requests
-        )
-    else:
-        suppress_statsd = True
-        statsd_path = ""
 
     time_delta = -1
     # A time duration of -1 means the StartLogRequests middleware
@@ -214,10 +168,6 @@ def write_log_line(
                 f" (mem: {format_timedelta(remote_cache_time_delta)}/{remote_cache_count_delta})"
             )
 
-        if not suppress_statsd:
-            statsd.timing(f"{statsd_path}.remote_cache.time", timedelta_ms(remote_cache_time_delta))
-            statsd.incr(f"{statsd_path}.remote_cache.querycount", remote_cache_count_delta)
-
     startup_output = ""
     if "startup_time_delta" in log_data and log_data["startup_time_delta"] > 0.005:
         startup_output = " (+start: {})".format(format_timedelta(log_data["startup_time_delta"]))
@@ -240,22 +190,12 @@ def write_log_line(
                 f" (md: {format_timedelta(markdown_time_delta)}/{markdown_count_delta})"
             )
 
-            if not suppress_statsd:
-                statsd.timing(f"{statsd_path}.markdown.time", timedelta_ms(markdown_time_delta))
-                statsd.incr(f"{statsd_path}.markdown.count", markdown_count_delta)
-
     # Get the amount of time spent doing database queries
     db_time_output = ""
     queries = connection.connection.queries if connection.connection is not None else []
     if len(queries) > 0:
         query_time = sum(float(query.get("time", 0)) for query in queries)
         db_time_output = f" (db: {format_timedelta(query_time)}/{len(queries)}q)"
-
-        if not suppress_statsd:
-            # Log ms, db ms, and num queries to statsd
-            statsd.timing(f"{statsd_path}.dbtime", timedelta_ms(query_time))
-            statsd.incr(f"{statsd_path}.dbq", len(queries))
-            statsd.timing(f"{statsd_path}.total", timedelta_ms(time_delta))
 
     if "extra" in log_data:
         extra_request_data = " {}".format(log_data["extra"])
@@ -299,7 +239,7 @@ def write_log_line(
 
 
 class RequestContext(MiddlewareMixin):
-    def __call__(self, request: HttpRequest) -> HttpResponse:
+    def __call__(self, request: HttpRequest) -> HttpResponseBase:
         set_request(request)
         try:
             return self.get_response(request)
@@ -443,7 +383,7 @@ class LogRequests(MiddlewareMixin):
 
 
 class JsonErrorHandler(MiddlewareMixin):
-    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponseBase]) -> None:
         super().__init__(get_response)
         ignore_logger("zerver.middleware.json_error_handler")
 
@@ -569,7 +509,7 @@ class LocaleMiddleware(DjangoLocaleMiddleware):
 
 class RateLimitMiddleware(MiddlewareMixin):
     def set_response_headers(
-        self, response: HttpResponse, rate_limit_results: List[RateLimitResult]
+        self, response: HttpResponseBase, rate_limit_results: List[RateLimitResult]
     ) -> None:
         # The limit on the action that was requested is the minimum of the limits that get applied:
         limit = min(result.entity.max_api_calls() for result in rate_limit_results)
@@ -582,7 +522,9 @@ class RateLimitMiddleware(MiddlewareMixin):
         reset_time = time.time() + max(result.secs_to_freedom for result in rate_limit_results)
         response["X-RateLimit-Reset"] = str(int(reset_time))
 
-    def process_response(self, request: HttpRequest, response: HttpResponse) -> HttpResponse:
+    def process_response(
+        self, request: HttpRequest, response: HttpResponseBase
+    ) -> HttpResponseBase:
         if not settings.RATE_LIMITING:
             return response
 
@@ -595,7 +537,9 @@ class RateLimitMiddleware(MiddlewareMixin):
 
 
 class FlushDisplayRecipientCache(MiddlewareMixin):
-    def process_response(self, request: HttpRequest, response: HttpResponse) -> HttpResponse:
+    def process_response(
+        self, request: HttpRequest, response: HttpResponseBase
+    ) -> HttpResponseBase:
         # We flush the per-request caches after every request, so they
         # are not shared at all between requests.
         flush_per_request_caches()
@@ -635,6 +579,14 @@ class HostDomainMiddleware(MiddlewareMixin):
 
             return render(request, "zerver/invalid_realm.html", status=404)
 
+        # Check that we're not using the non-canonical form of a REALM_HOSTS subdomain
+        if subdomain in settings.REALM_HOSTS:
+            host = request.get_host().lower()
+            formal_host = request_notes.realm.host
+            if host != formal_host and not host.startswith(formal_host + ":"):
+                return HttpResponseRedirect(
+                    urljoin(request_notes.realm.uri, request.get_full_path())
+                )
         return None
 
 

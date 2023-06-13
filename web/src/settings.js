@@ -5,9 +5,9 @@ import timezones from "../generated/timezones.json";
 import render_settings_overlay from "../templates/settings_overlay.hbs";
 import render_settings_tab from "../templates/settings_tab.hbs";
 
-import * as admin from "./admin";
 import * as blueslip from "./blueslip";
 import * as browser_history from "./browser_history";
+import * as flatpickr from "./flatpickr";
 import {$t, $t_html} from "./i18n";
 import * as overlays from "./overlays";
 import {page_params} from "./page_params";
@@ -88,6 +88,8 @@ export function build_page() {
         can_create_new_bots: settings_bots.can_create_new_bots(),
         settings_label,
         demote_inactive_streams_values: settings_config.demote_inactive_streams_values,
+        web_mark_read_on_scroll_policy_values:
+            settings_config.web_mark_read_on_scroll_policy_values,
         user_list_style_values: settings_config.user_list_style_values,
         color_scheme_values: settings_config.color_scheme_values,
         default_view_values: settings_config.default_view_values,
@@ -127,13 +129,12 @@ export function open_settings_overlay() {
         $overlay: $("#settings_overlay_container"),
         on_close() {
             browser_history.exit_overlay();
+            flatpickr.close_all();
         },
     });
 }
 
 export function launch(section) {
-    build_page();
-    admin.build_page();
     settings_sections.reset_sections();
 
     open_settings_overlay();

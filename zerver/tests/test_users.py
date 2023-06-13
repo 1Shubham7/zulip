@@ -786,7 +786,7 @@ class QueryCountTest(ZulipTestCase):
 
         prereg_user = PreregistrationUser.objects.get(email="fred@zulip.com")
 
-        with self.assert_database_query_count(88):
+        with self.assert_database_query_count(91):
             with cache_tries_captured() as cache_tries:
                 with self.capture_send_event_calls(expected_num_events=11) as events:
                     fred = do_create_user(
@@ -878,7 +878,7 @@ class AdminCreateUserTest(ZulipTestCase):
 
         self.assertEqual(admin.can_create_users, False)
         result = self.client_post("/json/users", valid_params)
-        self.assert_json_error(result, "User not authorized for this query")
+        self.assert_json_error(result, "User not authorized to create users")
 
         do_change_can_create_users(admin, True)
         # can_create_users is insufficient without being a realm administrator:
@@ -957,6 +957,7 @@ class AdminCreateUserTest(ZulipTestCase):
         result = orjson.loads(result.content)
         self.assertEqual(new_user.full_name, "Romeo Montague")
         self.assertEqual(new_user.id, result["user_id"])
+        self.assertEqual(new_user.tos_version, UserProfile.TOS_VERSION_BEFORE_FIRST_LOGIN)
 
         # Make sure the recipient field is set correctly.
         self.assertEqual(

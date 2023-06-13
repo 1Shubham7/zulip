@@ -78,7 +78,6 @@ from zerver.models import (
     Message,
     Realm,
     Recipient,
-    ScheduledMessage,
     Stream,
     UserMessage,
     UserPresence,
@@ -458,32 +457,6 @@ def get_service_bot_events(
     return event_dict
 
 
-def do_schedule_messages(send_message_requests: Sequence[SendMessageRequest]) -> List[int]:
-    scheduled_messages: List[ScheduledMessage] = []
-
-    for send_request in send_message_requests:
-        scheduled_message = ScheduledMessage()
-        scheduled_message.sender = send_request.message.sender
-        scheduled_message.recipient = send_request.message.recipient
-        topic_name = send_request.message.topic_name()
-        scheduled_message.set_topic_name(topic_name=topic_name)
-        scheduled_message.content = send_request.message.content
-        scheduled_message.sending_client = send_request.message.sending_client
-        scheduled_message.stream = send_request.stream
-        scheduled_message.realm = send_request.realm
-        assert send_request.deliver_at is not None
-        scheduled_message.scheduled_timestamp = send_request.deliver_at
-        if send_request.delivery_type == "send_later":
-            scheduled_message.delivery_type = ScheduledMessage.SEND_LATER
-        elif send_request.delivery_type == "remind":
-            scheduled_message.delivery_type = ScheduledMessage.REMIND
-
-        scheduled_messages.append(scheduled_message)
-
-    ScheduledMessage.objects.bulk_create(scheduled_messages)
-    return [scheduled_message.id for scheduled_message in scheduled_messages]
-
-
 def build_message_send_dict(
     message: Message,
     stream: Optional[Stream] = None,
@@ -617,6 +590,7 @@ def create_user_messages(
     mentioned_user_ids: AbstractSet[int],
     mark_as_read_user_ids: Set[int],
     limit_unread_user_ids: Optional[Set[int]],
+    scheduled_message_to_self: bool,
 ) -> List[UserMessageLite]:
     # These properties on the Message are set via
     # render_markdown by code in the Markdown inline patterns
@@ -653,7 +627,14 @@ def create_user_messages(
     for user_profile_id in um_eligible_user_ids:
         flags = base_flags
         if (
-            (user_profile_id == sender_id and message.sent_by_human())
+            (
+                # Messages you sent from a non-API client are
+                # automatically marked as read for yourself; scheduled
+                # messages to yourself only are not.
+                user_profile_id == sender_id
+                and message.sent_by_human()
+                and not scheduled_message_to_self
+            )
             or user_profile_id in mark_as_read_user_ids
             or (limit_unread_user_ids is not None and user_profile_id not in limit_unread_user_ids)
         ):
@@ -688,27 +669,15 @@ def filter_presence_idle_user_ids(user_ids: Set[int]) -> List[int]:
     # currently idle and should potentially get email notifications
     # (and push notifications with with
     # user_profile.enable_online_push_notifications=False).
-    #
-    # We exclude any presence data from ZulipMobile for the purpose of
-    # triggering these notifications; the mobile app can more
-    # effectively do its own client-side filtering of notification
-    # sounds/etc. for the case that the user is actively doing a PM
-    # conversation in the app.
 
     if not user_ids:
         return []
 
     recent = timezone_now() - datetime.timedelta(seconds=settings.OFFLINE_THRESHOLD_SECS)
-    rows = (
-        UserPresence.objects.filter(
-            user_profile_id__in=user_ids,
-            status=UserPresence.ACTIVE,
-            timestamp__gte=recent,
-        )
-        .exclude(client__name="ZulipMobile")
-        .distinct("user_profile_id")
-        .values("user_profile_id")
-    )
+    rows = UserPresence.objects.filter(
+        user_profile_id__in=user_ids,
+        last_active_time__gte=recent,
+    ).values("user_profile_id")
     active_user_ids = {row["user_profile_id"] for row in rows}
     idle_user_ids = user_ids - active_user_ids
     return sorted(idle_user_ids)
@@ -744,7 +713,9 @@ def get_active_presence_idle_user_ids(
 
 def do_send_messages(
     send_message_requests_maybe_none: Sequence[Optional[SendMessageRequest]],
+    *,
     email_gateway: bool = False,
+    scheduled_message_to_self: bool = False,
     mark_as_read: Sequence[int] = [],
 ) -> List[int]:
     """See
@@ -792,6 +763,7 @@ def do_send_messages(
                 mentioned_user_ids=mentioned_user_ids,
                 mark_as_read_user_ids=mark_as_read_user_ids,
                 limit_unread_user_ids=send_request.limit_unread_user_ids,
+                scheduled_message_to_self=scheduled_message_to_self,
             )
 
             for um in user_messages:
@@ -1122,7 +1094,7 @@ def check_send_private_message(
 def check_send_message(
     sender: UserProfile,
     client: Client,
-    message_type_name: str,
+    recipient_type_name: str,
     message_to: Union[Sequence[int], Sequence[str]],
     topic_name: Optional[str],
     message_content: str,
@@ -1136,7 +1108,7 @@ def check_send_message(
     *,
     skip_stream_access_check: bool = False,
 ) -> int:
-    addressee = Addressee.legacy_build(sender, message_type_name, message_to, topic_name)
+    addressee = Addressee.legacy_build(sender, recipient_type_name, message_to, topic_name)
     try:
         message = check_message(
             sender,
@@ -1155,40 +1127,6 @@ def check_send_message(
     except ZephyrMessageAlreadySentError as e:
         return e.message_id
     return do_send_messages([message])[0]
-
-
-def check_schedule_message(
-    sender: UserProfile,
-    client: Client,
-    message_type_name: str,
-    message_to: Union[Sequence[str], Sequence[int]],
-    topic_name: Optional[str],
-    message_content: str,
-    delivery_type: str,
-    deliver_at: datetime.datetime,
-    realm: Optional[Realm] = None,
-    forwarder_user_profile: Optional[UserProfile] = None,
-) -> int:
-    addressee = Addressee.legacy_build(sender, message_type_name, message_to, topic_name)
-
-    send_request = check_message(
-        sender,
-        client,
-        addressee,
-        message_content,
-        realm=realm,
-        forwarder_user_profile=forwarder_user_profile,
-    )
-    send_request.deliver_at = deliver_at
-    send_request.delivery_type = delivery_type
-
-    recipient = send_request.message.recipient
-    if delivery_type == "remind" and (
-        recipient.type != Recipient.STREAM and recipient.type_id != sender.id
-    ):
-        raise JsonableError(_("Reminders can only be set for streams."))
-
-    return do_schedule_messages([send_request])[0]
 
 
 def send_rate_limited_pm_notification_to_bot_owner(

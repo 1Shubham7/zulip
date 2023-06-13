@@ -204,6 +204,7 @@ def do_change_full_name(
         event_type=RealmAuditLog.USER_FULL_NAME_CHANGED,
         event_time=event_time,
         extra_data=old_name,
+        extra_data_json={RealmAuditLog.OLD_VALUE: old_name, RealmAuditLog.NEW_VALUE: full_name},
     )
     payload = dict(user_id=user_profile.id, full_name=user_profile.full_name)
     send_event(
@@ -250,7 +251,7 @@ def check_change_bot_full_name(
 
 
 @transaction.atomic(durable=True)
-def do_change_tos_version(user_profile: UserProfile, tos_version: str) -> None:
+def do_change_tos_version(user_profile: UserProfile, tos_version: Optional[str]) -> None:
     user_profile.tos_version = tos_version
     user_profile.save(update_fields=["tos_version"])
     event_time = timezone_now()
@@ -536,7 +537,7 @@ def do_change_user_setting(
         # setting; not doing so can make it look like the settings
         # change didn't have any effect.
         if setting_value:
-            status = UserPresence.ACTIVE
+            status = UserPresence.LEGACY_STATUS_ACTIVE_INT
             presence_time = timezone_now()
         else:
             # HACK: Remove existing presence data for the current user
@@ -553,7 +554,7 @@ def do_change_user_setting(
             #
             # We add a small additional offset as a fudge factor in
             # case of clock skew.
-            status = UserPresence.IDLE
+            status = UserPresence.LEGACY_STATUS_IDLE_INT
             presence_time = timezone_now() - datetime.timedelta(
                 seconds=settings.OFFLINE_THRESHOLD_SECS + 120
             )

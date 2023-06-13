@@ -42,7 +42,6 @@ from zerver.lib.message import MessageDict
 from zerver.lib.narrow import build_narrow_filter
 from zerver.lib.notification_data import UserMessageNotificationsData
 from zerver.lib.queue import queue_json_publish, retry_event
-from zerver.lib.utils import statsd
 from zerver.middleware import async_request_timer_restart
 from zerver.models import CustomProfileField
 from zerver.tornado.descriptors import clear_descriptor_by_handler_id, set_descriptor_by_handler_id
@@ -96,6 +95,7 @@ class ClientDescriptor:
         stream_typing_notifications: bool = False,
         user_settings_object: bool = False,
         pronouns_field_type_supported: bool = True,
+        linkifier_url_template: bool = False,
     ) -> None:
         # These objects are serialized on shutdown and restored on restart.
         # If fields are added or semantics are changed, temporary code must be
@@ -120,6 +120,7 @@ class ClientDescriptor:
         self.stream_typing_notifications = stream_typing_notifications
         self.user_settings_object = user_settings_object
         self.pronouns_field_type_supported = pronouns_field_type_supported
+        self.linkifier_url_template = linkifier_url_template
 
         # Default for lifespan_secs is DEFAULT_EVENT_QUEUE_TIMEOUT_SECS;
         # but users can set it as high as MAX_QUEUE_TIMEOUT_SECS.
@@ -148,6 +149,7 @@ class ClientDescriptor:
             stream_typing_notifications=self.stream_typing_notifications,
             user_settings_object=self.user_settings_object,
             pronouns_field_type_supported=self.pronouns_field_type_supported,
+            linkifier_url_template=self.linkifier_url_template,
         )
 
     def __repr__(self) -> str:
@@ -181,6 +183,7 @@ class ClientDescriptor:
             d.get("stream_typing_notifications", False),
             d.get("user_settings_object", False),
             d.get("pronouns_field_type_supported", True),
+            d.get("linkifier_url_template", False),
         )
         ret.last_connection_time = d["last_connection_time"]
         return ret
@@ -561,8 +564,6 @@ def gc_event_queues(port: int) -> None:
             len(clients),
             handler_stats_string(),
         )
-    statsd.gauge("tornado.active_queues", len(clients))
-    statsd.gauge("tornado.active_users", len(user_clients))
 
 
 def persistent_queue_filename(port: int, last: bool = False) -> str:
@@ -949,7 +950,7 @@ def process_message_event(
 
     sender_id: int = wide_dict["sender_id"]
     message_id: int = wide_dict["id"]
-    message_type: str = wide_dict["type"]
+    recipient_type_name: str = wide_dict["type"]
     sending_client: str = wide_dict["client"]
 
     @lru_cache(maxsize=None)
@@ -970,7 +971,7 @@ def process_message_event(
 
         # If the recipient was offline and the message was a single or group PM to them
         # or they were @-notified potentially notify more immediately
-        private_message = message_type == "private"
+        private_message = recipient_type_name == "private"
         user_notifications_data = UserMessageNotificationsData.from_user_id_sets(
             user_id=user_profile_id,
             flags=flags,

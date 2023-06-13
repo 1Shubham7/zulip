@@ -154,17 +154,9 @@ js_rules = RuleList(
             "exclude": {"web/tests/"},
         },
         {
-            "pattern": r"ui.report_success\(",
-            "description": "Deprecated function, use ui_report.success.",
-        },
-        {
             "pattern": r"""report.success\(["']""",
             "description": "Argument to ui_report.success should be a literal string translated "
             "by $t_html()",
-        },
-        {
-            "pattern": r"ui.report_error\(",
-            "description": "Deprecated function, use ui_report.error.",
         },
         {
             "pattern": r"""report.error\(["'][^'"]""",
@@ -214,6 +206,7 @@ js_rules = RuleList(
         {
             "pattern": r"assert\(",
             "description": "Use 'assert.ok' instead of 'assert'. We avoid the use of 'assert' as it can easily be confused with 'assert.equal'.",
+            "include_only": {"web/tests/"},
             "good_lines": ["assert.ok(...)"],
             "bad_lines": ["assert(...)"],
         },
@@ -351,7 +344,7 @@ python_rules = RuleList(
         },
         # Directly fetching Message objects in e.g. views code is often a security bug.
         {
-            "pattern": "[^r]Message.objects.get",
+            "pattern": "[^a-z]Message.objects.get",
             "exclude": {
                 "zerver/tests",
                 "zerver/lib/onboarding.py",
@@ -903,6 +896,18 @@ puppet_rules = RuleList(
     ],
 )
 
+openapi_rules = RuleList(
+    langs=["yaml"],
+    rules=[
+        *whitespace_rules,
+        {
+            "pattern": "True|TRUE|False|FALSE|Null|NULL",
+            "include_only": {"zerver/openapi/"},
+            "description": "Use lowercase for true, false and null in API documentation.",
+        },
+    ],
+)
+
 txt_rules = RuleList(
     langs=["txt", "text", "yaml", "rst", "yml"],
     rules=whitespace_rules,
@@ -918,4 +923,5 @@ non_py_rules = [
     bash_rules,
     txt_rules,
     puppet_rules,
+    openapi_rules,
 ]

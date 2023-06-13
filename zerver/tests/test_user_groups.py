@@ -333,11 +333,11 @@ class UserGroupAPITestCase(UserGroupTestCase):
         user_group = UserGroup.objects.get(name="support")
         # Test success
         self.assertEqual(UserGroup.objects.filter(realm=hamlet.realm).count(), 10)
-        self.assertEqual(UserGroupMembership.objects.count(), 47)
+        self.assertEqual(UserGroupMembership.objects.count(), 45)
         result = self.client_delete(f"/json/user_groups/{user_group.id}")
         self.assert_json_success(result)
         self.assertEqual(UserGroup.objects.filter(realm=hamlet.realm).count(), 9)
-        self.assertEqual(UserGroupMembership.objects.count(), 46)
+        self.assertEqual(UserGroupMembership.objects.count(), 44)
         # Test when invalid user group is supplied
         result = self.client_delete("/json/user_groups/1111")
         self.assert_json_error(result, "Invalid user group")
@@ -905,6 +905,7 @@ class UserGroupAPITestCase(UserGroupTestCase):
             realm, "leadership", [desdemona, iago, hamlet], acting_user=None
         )
         support_group = check_add_user_group(realm, "support", [hamlet, othello], acting_user=None)
+        test_group = check_add_user_group(realm, "test", [hamlet], acting_user=None)
 
         self.login("cordelia")
         # Non-admin and non-moderators who are not a member of group cannot add or remove subgroups.
@@ -966,6 +967,28 @@ class UserGroupAPITestCase(UserGroupTestCase):
             ("User group {group_id} is already a subgroup of this group.").format(
                 group_id=leadership_group.id
             ),
+        )
+
+        self.login("iago")
+        params = {"add": orjson.dumps([support_group.id]).decode()}
+        result = self.client_post(f"/json/user_groups/{leadership_group.id}/subgroups", info=params)
+        self.assert_json_error(
+            result,
+            (
+                "User group {user_group_id} is already a subgroup of one of the passed subgroups."
+            ).format(user_group_id=leadership_group.id),
+        )
+
+        params = {"add": orjson.dumps([support_group.id]).decode()}
+        result = self.client_post(f"/json/user_groups/{test_group.id}/subgroups", info=params)
+
+        params = {"add": orjson.dumps([test_group.id]).decode()}
+        result = self.client_post(f"/json/user_groups/{leadership_group.id}/subgroups", info=params)
+        self.assert_json_error(
+            result,
+            (
+                "User group {user_group_id} is already a subgroup of one of the passed subgroups."
+            ).format(user_group_id=leadership_group.id),
         )
 
         lear_realm = get_realm("lear")

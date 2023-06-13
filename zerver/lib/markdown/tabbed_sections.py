@@ -96,6 +96,10 @@ TAB_SECTION_LABELS = {
     "on-sign-up": "On sign-up",
     "via-markdown": "Via Markdown",
     "via-compose-box-buttons": "Via compose box buttons",
+    "stream-compose": "Compose to a stream",
+    "dm-compose": "Compose a DM",
+    "v6": "Zulip Server 6.0+",
+    "v4": "Zulip Server 4.0+",
 }
 
 

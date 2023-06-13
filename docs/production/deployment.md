@@ -52,7 +52,8 @@ as well as those mentioned in the
 [install](install.md#installer-options) documentation:
 
 - `--postgresql-version`: Sets the version of PostgreSQL that will be
-  installed. We currently support PostgreSQL 11, 12, 13, and 14.
+  installed. We currently support PostgreSQL 12, 13, 14, and 15, with 15 being
+  the default.
 
 - `--postgresql-database-name=exampledbname`: With this option, you
   can customize the default database name. If you do not set this. The
@@ -65,7 +66,7 @@ as well as those mentioned in the
   on the first install.
 
 - `--postgresql-missing-dictionaries`: Set
-  `postgresql.missing_dictionaries` ([docs][doc-settings]) in the
+  `postgresql.missing_dictionaries` ([docs][missing-dicts]) in the
   Zulip settings, which omits some configuration needed for full-text
   indexing. This should be used with [cloud managed databases like
   RDS](#using-zulip-with-amazon-rds-as-the-database). This option
@@ -77,6 +78,8 @@ as well as those mentioned in the
 
 - `--no-overwrite-settings`: This option preserves existing
   `/etc/zulip` configuration files.
+
+[missing-dicts]: #missing_dictionaries
 
 ## Installing on an existing server
 
@@ -92,7 +95,27 @@ user-configured actions to run before and after an upgrade; see the
 [upgrading documentation](upgrade.md#deployment-hooks) for details on
 how to write your own.
 
-Zulip also provides and optional deploy hook for Sentry.
+### Zulip message deploy hook
+
+Zulip can use its deploy hooks to send a message immediately before and after
+conducting an upgrade. To configure this:
+
+1. Add `, zulip::hooks::zulip_notify` to the `puppet_classes` line in
+   `/etc/zulip/zulip.conf`
+1. Add a `[zulip_notify]` section to `/etc/zulip/zulip.conf`:
+   ```ini
+   [zulip_notify]
+   bot_email = your-bot@zulip.example.com
+   server = zulip.example.com
+   stream = deployments
+   ```
+1. Add the [api key](https://zulip.com/api/api-keys#get-a-bots-api-key) for the
+   bot user in `/etc/zulip/zulip-secrets.conf` as `zulip_release_api_key`:
+   ```ini
+   # Replace with your own bot's token, found in the Zulip UI
+   zulip_release_api_key = abcd1234E6DK0F7pNSqaMSuzd8C5i7Eu
+   ```
+1. As root, run `/home/zulip/deployments/current/scripts/zulip-puppet-apply`.
 
 ### Sentry deploy hook
 
@@ -117,7 +140,7 @@ To do so:
    organization = your-organization-name
    project = your-project-name
    ```
-6. Add the [authentication token] for your internal Sentry integration
+6. Add the [authentication token][sentry-tokens] for your internal Sentry integration
    to your `/etc/zulip/zulip-secrets.conf`:
    ```ini
    # Replace with your own token, found in Sentry
@@ -454,6 +477,7 @@ that your Zulip server sits at `https://10.10.10.10:443`; see
 
            location / {
                    proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+                   proxy_set_header        X-Forwarded-Proto $scheme;
                    proxy_set_header        Host $http_host;
                    proxy_http_version      1.1;
                    proxy_buffering         off;
@@ -487,7 +511,7 @@ Apache requires you use the hostname, not the IP address; see
 
 1. Enable some required Apache modules:
 
-   ```
+   ```bash
    a2enmod ssl proxy proxy_http headers rewrite
    ```
 
@@ -554,6 +578,8 @@ your Zulip server sits at `https://10.10.10.10:443`see
        bind *:80
        bind *:443 ssl crt /etc/ssl/private/zulip-combined.crt
        http-request redirect scheme https code 301 unless { ssl_fc }
+       http-request set-header X-Forwarded-Proto http unless { ssl_fc }
+       http-request set-header X-Forwarded-Proto https if { ssl_fc }
        default_backend zulip
 
    backend zulip
@@ -578,6 +604,13 @@ things you need to be careful about when configuring it:
    your work by looking at `/var/log/zulip/server.log` and checking it
    has the actual IP addresses of clients, not the IP address of the
    proxy server.
+
+1. Configure your reverse proxy (or proxies) to correctly maintain the
+   `X-Forwarded-Proto` HTTP header, which is supposed to contain either `https`
+   or `http` depending on the connection between your browser and your
+   proxy. This will be used by Django to perform CSRF checks regardless of your
+   connection mechanism from your proxy to Zulip. Note that the proxies _must_
+   set the header, overriding any existing values, not add a new header.
 
 1. Configure your proxy to pass along the `Host:` header as was sent
    from the client, not the internal hostname as seen by the proxy.
@@ -753,11 +786,22 @@ RabbitMQ.
 
 #### `rolling_restart`
 
-If set to a non-empty value, when using `./scripts/restart-server` to
-restart Zulip, restart the uwsgi processes one-at-a-time, instead of
-all at once. This decreases the number of 502's served to clients, at
-the cost of slightly increased memory usage, and the possibility that
+If set to true, when using `./scripts/restart-server` to restart
+Zulip, restart the uwsgi processes one-at-a-time, instead of all at
+once. This decreases the number of 502's served to clients, at the
+cost of slightly increased memory usage, and the possibility that
 different requests will be served by different versions of the code.
+
+#### `service_file_descriptor_limit`
+
+The number of file descriptors which [Supervisor is configured to allow
+processes to use][supervisor-minfds]; defaults to 40000. If your Zulip deployment
+is very large (hundreds of thousands of concurrent users), your Django processes
+hit this limit and refuse connections to clients. Raising it above this default
+may require changing system-level limits, particularly if you are using a
+virtualized environment (e.g. Docker, or Proxmox LXC).
+
+[supervisor-minfds]: http://supervisord.org/configuration.html?highlight=minfds#supervisord-section-values
 
 #### `s3_memory_cache_size`
 
@@ -779,6 +823,14 @@ use; the default is 30 days. Since the contents of the cache are
 immutable, this serves only as a potential additional limit on the
 size of the contents on disk; `s3_disk_cache_size` is expected to be
 the primary control for cache sizing.
+
+#### `nameserver`
+
+When the [S3 storage backend][s3-backend] is in use, downloads from S3 are
+proxied from nginx, whose configuration requires an explicit value of a DNS
+nameserver to resolve the S3 server's hostname. Zulip defaults to using the
+resolver found in `/etc/resolv.conf`; this setting overrides any value found
+there.
 
 [s3-backend]: upload-backends.md
 
@@ -835,6 +887,27 @@ server as, for streaming replication. Authentication will be done
 based on the `pg_hba.conf` file; if you are using password
 authentication, you can set a `postgresql_replication_password` secret
 for authentication.
+
+#### `skip_backups`
+
+If set to as true value, inhibits the nightly [`wal-g` backups][wal-g] which
+would be taken on all non-replicated hosts and [all warm standby
+replicas](#postgresql-warm-standby). This is generally only set if you have
+multiple warm standby replicas, in order to avoid taking multiple backups, one
+per replica.
+
+#### `backups_disk_concurrency`
+
+Number of concurrent disk reads to use when taking backups. Defaults to 1; you
+may wish to increase this if you are taking backups on a replica, so can afford
+to affect other disk I/O, and have an SSD which is good at parallel random
+reads.
+
+#### `missing_dictionaries`
+
+If set to a true value during initial database creation, uses PostgreSQL's
+standard `pg_catalog.english` text search configuration, rather than Zulip's
+improved set of stopwords. Has no effect after initial database construction.
 
 #### `ssl_ca_file`
 

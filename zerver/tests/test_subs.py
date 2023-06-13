@@ -541,6 +541,19 @@ class TestCreateStreams(ZulipTestCase):
             "'can_remove_subscribers_group' setting cannot be set to '@role:owners' group.",
         )
 
+        nobody_group = UserGroup.objects.get(name="@role:nobody", is_system_group=True, realm=realm)
+        post_data = {
+            "subscriptions": orjson.dumps(
+                [{"name": "new_stream3", "description": "Third new stream"}]
+            ).decode(),
+            "can_remove_subscribers_group_id": orjson.dumps(nobody_group.id).decode(),
+        }
+        result = self.api_post(user, "/api/v1/users/me/subscriptions", post_data, subdomain="zulip")
+        self.assert_json_error(
+            result,
+            "'can_remove_subscribers_group' setting cannot be set to '@role:nobody' group.",
+        )
+
 
 class RecipientTest(ZulipTestCase):
     def test_recipient(self) -> None:
@@ -2104,6 +2117,16 @@ class StreamAdminTest(ZulipTestCase):
             "'can_remove_subscribers_group' setting cannot be set to '@role:owners' group.",
         )
 
+        nobody_group = UserGroup.objects.get(name="@role:nobody", is_system_group=True, realm=realm)
+        result = self.client_patch(
+            f"/json/streams/{stream.id}",
+            {"can_remove_subscribers_group_id": orjson.dumps(nobody_group.id).decode()},
+        )
+        self.assert_json_error(
+            result,
+            "'can_remove_subscribers_group' setting cannot be set to '@role:nobody' group.",
+        )
+
         # For private streams, even admins must be subscribed to the stream to change
         # can_remove_subscribers_group setting.
         stream = self.make_stream("stream_name2", invite_only=True)
@@ -2270,6 +2293,11 @@ class StreamAdminTest(ZulipTestCase):
         )
         self.assert_json_error(result, f"Unable to access stream ({deactivated_stream_name}).")
 
+        # You cannot re-archive the stream
+        with self.capture_send_event_calls(expected_num_events=0) as events:
+            result = self.client_delete("/json/streams/" + str(stream_id))
+        self.assert_json_error(result, "Stream is already deactivated")
+
     def test_you_must_be_realm_admin(self) -> None:
         """
         You must be on the realm to create a stream.
@@ -2304,14 +2332,17 @@ class StreamAdminTest(ZulipTestCase):
         stream = self.set_up_stream_for_archiving("newstream", invite_only=True)
         self.archive_stream(stream)
 
-    def test_archive_streams_youre_not_on(self) -> None:
+    def test_archive_stream_youre_not_on(self) -> None:
         """
-        Administrators can delete public streams they aren't on, including
-        private streams in their realm.
+        Administrators can delete public streams they aren't on
         """
         pub_stream = self.set_up_stream_for_archiving("pubstream", subscribed=False)
         self.archive_stream(pub_stream)
 
+    def test_archive_invite_only_stream_youre_not_on(self) -> None:
+        """
+        Administrators can delete invite-only streams they aren't on
+        """
         priv_stream = self.set_up_stream_for_archiving(
             "privstream", subscribed=False, invite_only=True
         )
@@ -4391,7 +4422,7 @@ class SubscriptionAPITest(ZulipTestCase):
 
         # Now add ourselves
         with self.capture_send_event_calls(expected_num_events=2) as events:
-            with self.assert_database_query_count(13):
+            with self.assert_database_query_count(12):
                 self.common_subscribe_to_streams(
                     self.test_user,
                     streams_to_sub,
@@ -4408,7 +4439,7 @@ class SubscriptionAPITest(ZulipTestCase):
         )
 
         self.assertNotIn(self.example_user("polonius").id, add_peer_event["users"])
-        self.assert_length(add_peer_event["users"], 12)
+        self.assert_length(add_peer_event["users"], 11)
         self.assertEqual(add_peer_event["event"]["type"], "subscription")
         self.assertEqual(add_peer_event["event"]["op"], "peer_add")
         self.assertEqual(add_peer_event["event"]["user_ids"], [self.user_profile.id])
@@ -4439,7 +4470,7 @@ class SubscriptionAPITest(ZulipTestCase):
         # We don't send a peer_add event to othello
         self.assertNotIn(user_profile.id, add_peer_event["users"])
         self.assertNotIn(self.example_user("polonius").id, add_peer_event["users"])
-        self.assert_length(add_peer_event["users"], 12)
+        self.assert_length(add_peer_event["users"], 11)
         self.assertEqual(add_peer_event["event"]["type"], "subscription")
         self.assertEqual(add_peer_event["event"]["op"], "peer_add")
         self.assertEqual(add_peer_event["event"]["user_ids"], [user_profile.id])
@@ -4700,34 +4731,67 @@ class SubscriptionAPITest(ZulipTestCase):
 
     def test_bulk_subscribe_MIT(self) -> None:
         mit_user = self.mit_user("starnine")
+        num_streams = 15
 
         realm = get_realm("zephyr")
-        stream_names = [f"stream_{i}" for i in range(40)]
+        stream_names = [f"stream_{i}" for i in range(num_streams)]
         streams = [self.make_stream(stream_name, realm=realm) for stream_name in stream_names]
 
         for stream in streams:
             stream.is_in_zephyr_realm = True
             stream.save()
 
-        # Make sure Zephyr mirroring realms such as MIT do not get
-        # any tornado subscription events
-        with self.capture_send_event_calls(expected_num_events=0):
-            with self.assert_database_query_count(5):
+        # Verify that peer_event events are never sent in Zephyr
+        # realm. This does generate stream creation events from
+        # send_stream_creation_events_for_private_streams.
+        with self.capture_send_event_calls(expected_num_events=num_streams + 1) as events:
+            with self.assert_database_query_count(num_streams + 12):
                 self.common_subscribe_to_streams(
                     mit_user,
                     stream_names,
                     dict(principals=orjson.dumps([mit_user.id]).decode()),
                     subdomain="zephyr",
-                    allow_fail=True,
                 )
+            # num_streams stream creation events:
+            self.assertEqual(
+                {(event["event"]["type"], event["event"]["op"]) for event in events[0:num_streams]},
+                {("stream", "create")},
+            )
+            # Followed by one subscription event:
+            self.assertEqual(events[num_streams]["event"]["type"], "subscription")
 
-        with self.capture_send_event_calls(expected_num_events=0):
+        with self.capture_send_event_calls(expected_num_events=1):
             bulk_remove_subscriptions(
                 realm,
                 users=[mit_user],
                 streams=streams,
                 acting_user=None,
             )
+
+    def test_subscribe_others_to_public_stream_in_zephyr_realm(self) -> None:
+        """
+        Users cannot be subscribed to public streams by other users in zephyr realm.
+        """
+        starnine = self.mit_user("starnine")
+        espuser = self.mit_user("espuser")
+
+        realm = get_realm("zephyr")
+        stream = self.make_stream("stream_1", realm=realm)
+        stream.is_in_zephyr_realm = True
+        stream.save()
+
+        result = self.common_subscribe_to_streams(
+            starnine,
+            ["stream_1"],
+            dict(principals=orjson.dumps([starnine.id, espuser.id]).decode()),
+            subdomain="zephyr",
+            allow_fail=True,
+        )
+        self.assert_json_error(
+            result,
+            "You can only invite other Zephyr mirroring users to private streams.",
+            status_code=400,
+        )
 
     def test_bulk_subscribe_many(self) -> None:
         # Create a whole bunch of streams

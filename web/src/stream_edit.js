@@ -20,6 +20,7 @@ import {$t, $t_html} from "./i18n";
 import * as keydown_util from "./keydown_util";
 import * as narrow_state from "./narrow_state";
 import {page_params} from "./page_params";
+import * as scroll_util from "./scroll_util";
 import * as settings_config from "./settings_config";
 import * as settings_org from "./settings_org";
 import * as settings_ui from "./settings_ui";
@@ -31,7 +32,6 @@ import * as stream_settings_data from "./stream_settings_data";
 import * as stream_settings_ui from "./stream_settings_ui";
 import * as stream_ui_updates from "./stream_ui_updates";
 import * as sub_store from "./sub_store";
-import * as ui from "./ui";
 import * as ui_report from "./ui_report";
 import * as user_groups from "./user_groups";
 import {user_settings} from "./user_settings";
@@ -86,7 +86,7 @@ function get_sub_for_target(target) {
 
     const sub = sub_store.get(stream_id);
     if (!sub) {
-        blueslip.error("get_sub_for_target() failed id lookup: " + stream_id);
+        blueslip.error("get_sub_for_target() failed id lookup", {stream_id});
         return undefined;
     }
     return sub;
@@ -143,7 +143,7 @@ function show_subscription_settings(sub) {
     }
 
     if (!stream_data.can_toggle_subscription(sub)) {
-        stream_ui_updates.initialize_cant_subscribe_popover(sub);
+        stream_ui_updates.initialize_cant_subscribe_popover();
     }
 
     const $subscriber_container = $edit_container.find(".edit_subscribers_for_stream");
@@ -210,7 +210,9 @@ export function show_settings_for(node) {
 
     const opts = {
         widget_name: "can_remove_subscribers_group_id",
-        data: user_groups.get_realm_user_groups_for_dropdown_list_widget(true, true, true),
+        data: user_groups.get_realm_user_groups_for_dropdown_list_widget(
+            "can_remove_subscribers_group",
+        ),
         default_text: $t({defaultMessage: "No user groups"}),
         include_current_item: false,
         value: sub.can_remove_subscribers_group_id,
@@ -239,7 +241,7 @@ export function show_settings_for(node) {
         is_admin: page_params.is_admin,
         org_level_message_retention_setting: get_display_text_for_realm_message_retention_setting(),
     });
-    ui.get_content_element($("#stream_settings")).html(html);
+    scroll_util.get_content_element($("#stream_settings")).html(html);
 
     $("#stream_settings .tab-container").prepend(toggler.get());
     stream_ui_updates.update_toggler_for_sub(sub);
@@ -411,7 +413,7 @@ export function initialize() {
         stream_settings_ui.sub_or_unsub(sub);
     });
 
-    $("#manage_streams_container").on("click", "#open_stream_info_modal", (e) => {
+    $("#streams_overlay_container").on("click", "#open_stream_info_modal", (e) => {
         e.preventDefault();
         e.stopPropagation();
         const stream_id = get_stream_id(e.target);
@@ -439,7 +441,7 @@ export function initialize() {
         });
     });
 
-    $("#manage_streams_container").on("keypress", "#change_stream_description", (e) => {
+    $("#streams_overlay_container").on("keypress", "#change_stream_description", (e) => {
         // Stream descriptions can not be multiline, so disable enter key
         // to prevent new line
         if (keydown_util.is_enter_event(e)) {
@@ -473,7 +475,7 @@ export function initialize() {
         settings_ui.do_settings_change(channel.patch, url, data, $status_element);
     }
 
-    $("#manage_streams_container").on("click", ".copy_email_button", (e) => {
+    $("#streams_overlay_container").on("click", ".copy_email_button", (e) => {
         e.preventDefault();
         e.stopPropagation();
 
@@ -539,13 +541,13 @@ export function initialize() {
         });
     });
 
-    $("#manage_streams_container").on(
+    $("#streams_overlay_container").on(
         "change",
         "#sub_is_muted_setting .sub_setting_control",
         stream_is_muted_changed,
     );
 
-    $("#manage_streams_container").on(
+    $("#streams_overlay_container").on(
         "change",
         ".sub_setting_checkbox .sub_setting_control",
         stream_setting_changed,
@@ -553,11 +555,11 @@ export function initialize() {
 
     // This handler isn't part of the normal edit interface; it's the convenient
     // checkmark in the subscriber list.
-    $("#manage_streams_container").on("click", ".sub_unsub_button", (e) => {
+    $("#streams_overlay_container").on("click", ".sub_unsub_button", (e) => {
         const sub = get_sub_for_target(e.target);
         // Makes sure we take the correct stream_row.
         const $stream_row = $(
-            `#manage_streams_container div.stream-row[data-stream-id='${CSS.escape(
+            `#streams_overlay_container div.stream-row[data-stream-id='${CSS.escape(
                 sub.stream_id,
             )}']`,
         );
@@ -572,7 +574,7 @@ export function initialize() {
         e.stopPropagation();
     });
 
-    $("#manage_streams_container").on("click", ".deactivate", (e) => {
+    $("#streams_overlay_container").on("click", ".deactivate", (e) => {
         e.preventDefault();
         e.stopPropagation();
 
@@ -619,13 +621,13 @@ export function initialize() {
         $(".dialog_submit_button").attr("data-stream-id", stream_id);
     });
 
-    $("#manage_streams_container").on("click", ".stream-row", function (e) {
+    $("#streams_overlay_container").on("click", ".stream-row", function (e) {
         if ($(e.target).closest(".check, .subscription_settings").length === 0) {
             open_edit_panel_for_row(this);
         }
     });
 
-    $("#manage_streams_container").on("change", ".stream_message_retention_setting", (e) => {
+    $("#streams_overlay_container").on("change", ".stream_message_retention_setting", (e) => {
         const message_retention_setting_dropdown_value = e.target.value;
         settings_org.change_element_block_display_property(
             "stream_message_retention_custom_input",
@@ -633,7 +635,7 @@ export function initialize() {
         );
     });
 
-    $("#manage_streams_container").on("change input", "input, select, textarea", (e) => {
+    $("#streams_overlay_container").on("change input", "input, select, textarea", (e) => {
         e.preventDefault();
         e.stopPropagation();
 
@@ -651,7 +653,7 @@ export function initialize() {
         return true;
     });
 
-    $("#manage_streams_container").on(
+    $("#streams_overlay_container").on(
         "click",
         ".subsection-header .subsection-changes-save button",
         (e) => {
@@ -669,7 +671,7 @@ export function initialize() {
         },
     );
 
-    $("#manage_streams_container").on(
+    $("#streams_overlay_container").on(
         "click",
         ".subsection-header .subsection-changes-discard button",
         (e) => {

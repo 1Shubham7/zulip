@@ -39,6 +39,21 @@ export const demote_inactive_streams_values = {
     },
 };
 
+export const web_mark_read_on_scroll_policy_values = {
+    always: {
+        code: 1,
+        description: $t({defaultMessage: "Always"}),
+    },
+    conversation_only: {
+        code: 2,
+        description: $t({defaultMessage: "Only in conversation views"}),
+    },
+    never: {
+        code: 3,
+        description: $t({defaultMessage: "Never"}),
+    },
+};
+
 export const user_list_style_values = {
     compact: {
         code: 1,
@@ -92,7 +107,7 @@ export const twenty_four_hour_time_values = {
     },
 };
 
-export interface DisplaySettings {
+export type DisplaySettings = {
     settings: {
         user_display_settings: string[];
     };
@@ -100,7 +115,7 @@ export interface DisplaySettings {
         high_contrast_mode: boolean;
         dense_mode: boolean;
     };
-}
+};
 
 /* istanbul ignore next */
 export const get_all_display_settings = (): DisplaySettings => ({
@@ -745,7 +760,7 @@ export function get_notifications_table_row_data(
     });
 }
 
-export interface AllNotifications {
+export type AllNotifications = {
     general_settings: {label: string; notification_settings: NotificationSettingCheckbox[]}[];
     settings: {
         desktop_notification_settings: string[];
@@ -757,7 +772,7 @@ export interface AllNotifications {
         push_notifications: boolean;
         enable_online_push_notifications: boolean;
     };
-}
+};
 
 export const all_notifications = (settings_object: Settings): AllNotifications => ({
     general_settings: [
@@ -847,4 +862,23 @@ export const system_user_groups_list = [
         name: "@role:owners",
         display_name: $t({defaultMessage: "Owners"}),
     },
+    {
+        name: "@role:nobody",
+        display_name: $t({defaultMessage: "Nobody"}),
+    },
 ];
+
+export const user_topic_visibility_policy_values = {
+    muted: {
+        code: 1,
+        description: $t({defaultMessage: "Muted"}),
+    },
+    unmuted: {
+        code: 2,
+        description: $t({defaultMessage: "Unmuted"}),
+    },
+    inherit: {
+        code: 0,
+        description: $t({defaultMessage: "Default for stream"}),
+    },
+};

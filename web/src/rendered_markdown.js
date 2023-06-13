@@ -11,8 +11,9 @@ import {$t, $t_html} from "./i18n";
 import * as people from "./people";
 import * as realm_playground from "./realm_playground";
 import * as rtl from "./rtl";
-import * as stream_data from "./stream_data";
+import * as sub_store from "./sub_store";
 import * as timerender from "./timerender";
+import {show_copied_confirmation} from "./tippyjs";
 import * as user_groups from "./user_groups";
 import {user_settings} from "./user_settings";
 
@@ -107,7 +108,7 @@ export const update_elements = ($content) => {
             // This is a user group the current user doesn't have
             // data on.  This can happen when user groups are
             // deleted.
-            blueslip.info("Rendered unexpected user group " + user_group_id);
+            blueslip.info("Rendered unexpected user group", {user_group_id});
             return;
         }
 
@@ -129,10 +130,10 @@ export const update_elements = ($content) => {
         if (stream_id && !$(this).find(".highlight").length) {
             // Display the current name for stream if it is not
             // being displayed in search highlight.
-            const stream_name = stream_data.maybe_get_stream_name(stream_id);
+            const stream_name = sub_store.maybe_get_stream_name(stream_id);
             if (stream_name !== undefined) {
                 // If the stream has been deleted,
-                // stream_data.maybe_get_stream_name might return
+                // sub_store.maybe_get_stream_name might return
                 // undefined.  Otherwise, display the current stream name.
                 $(this).text("#" + stream_name);
             }
@@ -144,10 +145,10 @@ export const update_elements = ($content) => {
         if (stream_id && !$(this).find(".highlight").length) {
             // Display the current name for stream if it is not
             // being displayed in search highlight.
-            const stream_name = stream_data.maybe_get_stream_name(stream_id);
+            const stream_name = sub_store.maybe_get_stream_name(stream_id);
             if (stream_name !== undefined) {
                 // If the stream has been deleted,
-                // stream_data.maybe_get_stream_name might return
+                // sub_store.maybe_get_stream_name might return
                 // undefined.  Otherwise, display the current stream name.
                 const text = $(this).text();
                 $(this).text("#" + stream_name + text.slice(text.indexOf(" > ")));
@@ -171,7 +172,7 @@ export const update_elements = ($content) => {
             $(this).html(rendered_timestamp);
         } else {
             // This shouldn't happen. If it does, we're very interested in debugging it.
-            blueslip.error(`Could not parse datetime supplied by backend: ${time_str}`);
+            blueslip.error("Could not parse datetime supplied by backend", {time_str});
         }
     });
 
@@ -227,10 +228,13 @@ export const update_elements = ($content) => {
         }
         const $copy_button = $(copy_code_button());
         $pre.prepend($copy_button);
-        new ClipboardJS($copy_button[0], {
+        const clipboard = new ClipboardJS($copy_button[0], {
             text(copy_element) {
                 return $(copy_element).siblings("code").text();
             },
+        });
+        clipboard.on("success", () => {
+            show_copied_confirmation($copy_button[0]);
         });
     });
 

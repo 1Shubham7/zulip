@@ -41,6 +41,7 @@ const peer_data = zrequire("peer_data");
 const people = zrequire("people");
 const stream_data = zrequire("stream_data");
 const stream_events = zrequire("stream_events");
+const compose_recipient = zrequire("compose_recipient");
 
 const george = {
     email: "george@zulip.com",
@@ -86,7 +87,10 @@ function test(label, f) {
     });
 }
 
-test("update_property", ({override}) => {
+test("update_property", ({override, override_rewire}) => {
+    override_rewire(compose_recipient, "possibly_update_stream_name_in_compose", noop);
+    override_rewire(compose_recipient, "on_compose_select_recipient_update", noop);
+
     const sub = {...frontend};
     stream_data.add_sub(sub);
 
@@ -300,7 +304,7 @@ test("marked_subscribed (normal)", ({override}) => {
         list_updated = true;
     });
 
-    $("#manage_streams_container .stream-row:not(.notdisplayed)").length = 0;
+    $("#streams_overlay_container .stream-row:not(.notdisplayed)").length = 0;
 
     stream_events.mark_subscribed(sub, [], "blue");
 
@@ -330,7 +334,7 @@ test("marked_subscribed (color)", ({override}) => {
 
     override(color_data, "pick_color", () => "green");
 
-    $("#manage_streams_container .stream-row:not(.notdisplayed)").length = 0;
+    $("#streams_overlay_container .stream-row:not(.notdisplayed)").length = 0;
 
     // narrow state is undefined
     {
@@ -360,7 +364,7 @@ test("marked_subscribed (emails)", ({override}) => {
     const subs_stub = make_stub();
     override(stream_settings_ui, "update_settings_for_subscribed", subs_stub.f);
 
-    $("#manage_streams_container .stream-row:not(.notdisplayed)").length = 0;
+    $("#streams_overlay_container .stream-row:not(.notdisplayed)").length = 0;
 
     assert.ok(!stream_data.is_subscribed_by_name(sub.name));
 
@@ -386,7 +390,7 @@ test("mark_unsubscribed (update_settings_for_unsubscribed)", ({override}) => {
     override(stream_list, "update_subscribe_to_more_streams_link", noop);
     override(unread_ui, "update_unread_counts", noop);
 
-    $("#manage_streams_container .stream-row:not(.notdisplayed)").length = 0;
+    $("#streams_overlay_container .stream-row:not(.notdisplayed)").length = 0;
 
     stream_events.mark_unsubscribed(sub);
     const args = stub.get_args("sub");
@@ -410,9 +414,9 @@ test("mark_unsubscribed (render_title_area)", ({override}) => {
     override(stream_list, "remove_sidebar_row", noop);
     override(stream_list, "update_subscribe_to_more_streams_link", noop);
     override(unread_ui, "update_unread_counts", noop);
-    override(unread_ui, "hide_mark_as_read_turned_off_banner", noop);
+    override(unread_ui, "hide_unread_banner", noop);
 
-    $("#manage_streams_container .stream-row:not(.notdisplayed)").length = 0;
+    $("#streams_overlay_container .stream-row:not(.notdisplayed)").length = 0;
 
     stream_events.mark_unsubscribed(sub);
 

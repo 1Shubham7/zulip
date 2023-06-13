@@ -29,7 +29,7 @@ adapter](https://github.com/zulip/hubot-zulip); integrations with
 [Trello](https://github.com/zulip/trello-to-zulip);
 and [many more](https://github.com/zulip/).
 
-We use [Transifex](https://www.transifex.com/zulip/zulip/) to do
+We use [Transifex](https://explore.transifex.com/zulip/zulip/) to do
 translations.
 
 In this overview, we'll mainly discuss the core Zulip server and web
@@ -40,16 +40,16 @@ application.
 Zulip is a real-time team chat application meant to provide a great
 experience for a wide range of organizations, from companies to
 volunteer projects to groups of friends, ranging in size from a small
-team to 10,000s of users. It has [hundreds of
-features](https://zulip.com/features/) both larger and small, and
+team to tens of thousands of users. It has [hundreds of
+features](https://zulip.com/features/) both large and small, and
 supports dedicated apps for iOS, Android, Linux, Windows, and macOS,
 all modern web browsers, several cross-protocol chat clients, and
 numerous dedicated [Zulip API](https://zulip.com/api) clients
-(e.g. bots).
+(e.g., bots).
 
 A server can host multiple Zulip _realms_ (organizations), each on its
 own (sub)domain. While most installations host only one organization, some
-such as zulip.com host thousands. Each organization is a private
+host thousands, such as zulip.com. Each organization is a private
 chamber with its own users, streams, customizations, and so on. This
 means that one person might be a user of multiple Zulip realms. The
 administrators of an organization have a great deal of control over

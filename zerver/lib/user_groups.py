@@ -1,5 +1,6 @@
 from typing import Dict, Iterable, List, Sequence, TypedDict
 
+from django.db import transaction
 from django.db.models import F, QuerySet
 from django.utils.translation import gettext as _
 from django_cte import With
@@ -65,6 +66,7 @@ def access_user_group_for_setting(
     require_system_group: bool = False,
     allow_internet_group: bool = False,
     allow_owners_group: bool = False,
+    allow_nobody_group: bool = True,
 ) -> UserGroup:
     user_group = access_user_group_by_id(user_group_id, user_profile, for_read=True)
 
@@ -79,6 +81,11 @@ def access_user_group_for_setting(
     if not allow_owners_group and user_group.name == UserGroup.OWNERS_GROUP_NAME:
         raise JsonableError(
             _("'{}' setting cannot be set to '@role:owners' group.").format(setting_name)
+        )
+
+    if not allow_nobody_group and user_group.name == UserGroup.NOBODY_GROUP_NAME:
+        raise JsonableError(
+            _("'{}' setting cannot be set to '@role:nobody' group.").format(setting_name)
         )
 
     return user_group
@@ -209,6 +216,17 @@ def get_subgroup_ids(user_group: UserGroup, *, direct_subgroup_only: bool = Fals
     return list(subgroup_ids)
 
 
+def get_recursive_subgroups_for_groups(user_group_ids: List[int]) -> List[int]:
+    cte = With.recursive(
+        lambda cte: UserGroup.objects.filter(id__in=user_group_ids)
+        .values(group_id=F("id"))
+        .union(cte.join(UserGroup, direct_supergroups=cte.col.group_id).values(group_id=F("id")))
+    )
+    recursive_subgroups = cte.join(UserGroup, id=cte.col.group_id).with_cte(cte)
+    return list(recursive_subgroups.values_list("id", flat=True))
+
+
+@transaction.atomic(savepoint=False)
 def create_system_user_groups_for_realm(realm: Realm) -> Dict[int, UserGroup]:
     """Any changes to this function likely require a migration to adjust
     existing realms.  See e.g. migration 0382_create_role_based_system_groups.py,
