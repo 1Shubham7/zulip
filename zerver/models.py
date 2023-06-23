@@ -1589,6 +1589,13 @@ class UserBaseSettings(models.Model):
     notification_sound = models.CharField(max_length=20, default="zulip")
     wildcard_mentions_notify = models.BooleanField(default=True)
 
+    # Followed Topics notifications.
+    enable_followed_topic_desktop_notifications = models.BooleanField(default=True)
+    enable_followed_topic_email_notifications = models.BooleanField(default=True)
+    enable_followed_topic_push_notifications = models.BooleanField(default=True)
+    enable_followed_topic_audible_notifications = models.BooleanField(default=True)
+    enable_followed_topic_wildcard_mentions_notify = models.BooleanField(default=True)
+
     # PM + @-mention notifications.
     enable_desktop_notifications = models.BooleanField(default=True)
     pm_content_in_desktop_notifications = models.BooleanField(default=True)
@@ -1716,6 +1723,11 @@ class UserBaseSettings(models.Model):
 
     modern_notification_settings: Dict[str, Any] = dict(
         # Add new notification settings here.
+        enable_followed_topic_desktop_notifications=bool,
+        enable_followed_topic_email_notifications=bool,
+        enable_followed_topic_push_notifications=bool,
+        enable_followed_topic_audible_notifications=bool,
+        enable_followed_topic_wildcard_mentions_notify=bool,
     )
 
     notification_setting_types = {
@@ -2198,7 +2210,7 @@ class UserProfile(AbstractBaseUser, PermissionsMixin, UserBaseSettings):  # type
         else:
             return -1
 
-    def format_requestor_for_logs(self) -> str:
+    def format_requester_for_logs(self) -> str:
         return "{}@{}".format(self.id, self.realm.string_id or "root")
 
     def set_password(self, password: Optional[str]) -> None:
@@ -3463,11 +3475,11 @@ class UserMessage(AbstractUserMessage):
         the row locks acquired by a bulk update operation to modify
         message flags using bitand/bitor.
 
-        This consistent ordering is important to prevent to prevent
-        deadlocks when 2 or more bulk updates to the same rows in the
-        UserMessage table race against each other (For example, if a
-        client submits simultaneous duplicate API requests to mark a
-        certain set of messages as read).
+        This consistent ordering is important to prevent deadlocks when
+        2 or more bulk updates to the same rows in the UserMessage table
+        race against each other (For example, if a client submits
+        simultaneous duplicate API requests to mark a certain set of
+        messages as read).
         """
         return UserMessage.objects.select_for_update().order_by("message_id")
 
@@ -4276,6 +4288,9 @@ class NotificationTriggers:
     WILDCARD_MENTION = "wildcard_mentioned"
     STREAM_PUSH = "stream_push_notify"
     STREAM_EMAIL = "stream_email_notify"
+    FOLLOWED_TOPIC_PUSH = "followed_topic_push_notify"
+    FOLLOWED_TOPIC_EMAIL = "followed_topic_email_notify"
+    FOLLOWED_TOPIC_WILDCARD_MENTION = "followed_topic_wildcard_mentioned"
 
 
 class ScheduledMessageNotificationEmail(models.Model):
@@ -4293,6 +4308,8 @@ class ScheduledMessageNotificationEmail(models.Model):
         (NotificationTriggers.MENTION, "Mention"),
         (NotificationTriggers.WILDCARD_MENTION, "Wildcard mention"),
         (NotificationTriggers.STREAM_EMAIL, "Stream notifications enabled"),
+        (NotificationTriggers.FOLLOWED_TOPIC_EMAIL, "Followed topic notifications enabled"),
+        (NotificationTriggers.FOLLOWED_TOPIC_WILDCARD_MENTION, "Followed topic wildcard mention"),
     ]
 
     trigger = models.TextField(choices=EMAIL_NOTIFICATION_TRIGGER_CHOICES)

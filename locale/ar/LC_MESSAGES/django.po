@@ -5,6 +5,7 @@
 # Translators:
 # alebrahimyahmed <alebrahimyahmed@gmail.com>, 2020
 # najla seghaier <seghaier.najla95@gmail.com>, 2021
+# RanaJT, 2023
 # Tim Abbott <tabbott@kandralabs.com>, 2022
 # عبدالله نصار, 2022
 msgid ""
@@ -13,7 +14,7 @@ msgstr ""
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2023-05-31 01:00+0000\n"
 "PO-Revision-Date: 2015-12-06 00:18+0000\n"
-"Last-Translator: عبدالله نصار, 2022\n"
+"Last-Translator: RanaJT, 2023\n"
 "Language-Team: Arabic (http://app.transifex.com/zulip/zulip/language/ar/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -40,7 +41,7 @@ msgstr "تيارات خاصة"
 
 #: analytics/views/stats.py:296
 msgid "Direct messages"
-msgstr ""
+msgstr "الرسائل المباشرة "
 
 #: analytics/views/stats.py:297
 msgid "Group direct messages"
@@ -327,7 +328,7 @@ msgstr ""
 
 #: templates/analytics/stats.html:27
 msgid "Number of users"
-msgstr ""
+msgstr "عدد المستخدمين"
 
 #: templates/analytics/stats.html:28
 msgid "Users active during the last 15 days"
@@ -443,7 +444,7 @@ msgstr "التحديث الكامل لجميع الرسوم البيانية ي�
 
 #: templates/confirmation/confirm_email_change.html:4
 msgid "Email changed"
-msgstr ""
+msgstr "تم تغيير البريد الإكتروني"
 
 #: templates/confirmation/confirm_email_change.html:12
 msgid "Email changed!"
@@ -721,11 +722,11 @@ msgstr "إرسال"
 
 #: templates/corporate/support_request_thanks.html:4
 msgid "Thanks for contacting us"
-msgstr ""
+msgstr "شكراً لاتصالك بنا"
 
 #: templates/corporate/support_request_thanks.html:10
 msgid "Thanks for contacting us!"
-msgstr ""
+msgstr "شكراً لاتصالك بنا!"
 
 #: templates/corporate/support_request_thanks.html:11
 msgid "We will be in touch with you soon."
@@ -749,7 +750,7 @@ msgstr ""
 
 #: templates/corporate/upgrade.html:5
 msgid "Upgrade"
-msgstr ""
+msgstr "تحديث"
 
 #: templates/corporate/upgrade.html:23
 #, python-format
@@ -1790,7 +1791,7 @@ msgstr ""
 #: templates/zerver/emails/missed_message.txt:43
 #, python-format
 msgid "Reply in %(realm_name)s Zulip:"
-msgstr ""
+msgstr "الرد في %(realm_name)s Zulip:"
 
 #: templates/zerver/emails/missed_message.txt:47
 msgid ""
@@ -2459,7 +2460,7 @@ msgstr "تسجيل الدخول إلى \"زوليب\""
 
 #: templates/zerver/login.html:44
 msgid "View without an account"
-msgstr ""
+msgstr "عرض من غير حساب"
 
 #: templates/zerver/login.html:69
 msgid ""
@@ -2477,7 +2478,7 @@ msgstr "اسم المستخدم"
 #: templates/zerver/login.html:111 templates/zerver/register.html:133
 #: templates/zerver/register.html:146 templates/zerver/reset_confirm.html:31
 msgid "Password"
-msgstr "كلمة المرور"
+msgstr "كلمة السر"
 
 #: templates/zerver/login.html:143
 #, python-format
@@ -2711,7 +2712,7 @@ msgstr "يُستخدم هذا لتطبيقات الجوال والأدوات ا�
 
 #: templates/zerver/register.html:158
 msgid "Password strength"
-msgstr "قوة كلمة المرور"
+msgstr "قوة كلمة السر"
 
 #: templates/zerver/register.html:167
 msgid "What are you interested in?"
@@ -2745,7 +2746,7 @@ msgstr "قم بتعيين كلمة مرور جديدة."
 
 #: templates/zerver/reset_confirm.html:52
 msgid "Confirm password"
-msgstr "تأكيد كلمة المرور"
+msgstr "تأكيد كلمة السر"
 
 #: templates/zerver/reset_confirm.html:72
 msgid "Sorry, the link you provided is invalid or has already been used."
@@ -3095,7 +3096,7 @@ msgstr "عملية وضع علامة على رسالة غير صالحة: '{}'"
 #: zerver/actions/message_flags.py:333 zerver/lib/message.py:758
 #: zerver/lib/message.py:764
 msgid "Invalid message(s)"
-msgstr "الرسالة(الرسائل) غير الصالحة"
+msgstr "الرسالة(الرسائل) غير صالحة"
 
 #: zerver/actions/message_send.py:156
 msgid "Unable to render message"

@@ -156,6 +156,10 @@ class SendMessageRequest:
     pm_mention_email_disabled_user_ids: Set[int]
     stream_push_user_ids: Set[int]
     stream_email_user_ids: Set[int]
+    # IDs of users who have followed the topic the message is being sent to, and have the followed topic push notifications setting ON.
+    followed_topic_push_user_ids: Set[int]
+    # IDs of users who have followed the topic the message is being sent to, and have the followed topic email notifications setting ON.
+    followed_topic_email_user_ids: Set[int]
     muted_sender_user_ids: Set[int]
     um_eligible_user_ids: Set[int]
     long_term_idle_user_ids: Set[int]
@@ -163,6 +167,8 @@ class SendMessageRequest:
     service_bot_tuples: List[Tuple[int, int]]
     all_bot_user_ids: Set[int]
     wildcard_mention_user_ids: Set[int]
+    # IDs of users who have followed the topic the message is being sent to, and have the followed topic wildcard mentions notify setting ON.
+    followed_topic_wildcard_mention_user_ids: Set[int]
     links_for_embed: Set[str]
     widget_content: Optional[Dict[str, Any]]
     submessages: List[Dict[str, Any]] = field(default_factory=list)

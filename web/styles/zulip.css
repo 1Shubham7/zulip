@@ -448,7 +448,7 @@ p.n-margin {
 
 #navbar-middle .column-middle-inner,
 #userlist-toggle-button,
-.header-main,
+.header,
 #message_view_header {
     background-color: var(--color-background-navbar);
     box-shadow: inset 0 -1px 0 var(--color-navbar-bottom-border);
@@ -3065,6 +3065,9 @@ select.invite-as {
     /* `simplebar-content-wrapper` has `tabindex=0` set, which makes it focusable
         but we don't want it to have an outline when focused anywhere in the app. */
     outline: none;
+
+    /* This prevents the popover from closing once the top/bottom is reached */
+    overscroll-behavior: contain;
 }
 
 .dropdown-list-container {

@@ -36,7 +36,6 @@ from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.state import StateApps
 from django.db.utils import IntegrityError
 from django.http import HttpRequest, HttpResponse
-from django.http.response import StreamingHttpResponse
 from django.test import TestCase
 from django.test.client import BOUNDARY, MULTIPART_CONTENT, encode_multipart
 from django.test.testcases import SerializeMixin
@@ -1111,11 +1110,6 @@ Output:
 
         return [subscription.user_profile for subscription in subscriptions]
 
-    def assert_streaming_content(self, response: "TestHttpResponse", result: bytes) -> None:
-        assert isinstance(response, StreamingHttpResponse)
-        data = b"".join(response.streaming_content)
-        self.assertEqual(result, data)
-
     def assert_json_success(
         self,
         result: Union["TestHttpResponse", HttpResponse],
@@ -1729,6 +1723,14 @@ Output:
             wildcard_mention_push_notify=kwargs.get("wildcard_mention_push_notify", False),
             stream_email_notify=kwargs.get("stream_email_notify", False),
             stream_push_notify=kwargs.get("stream_push_notify", False),
+            followed_topic_email_notify=kwargs.get("followed_topic_email_notify", False),
+            followed_topic_push_notify=kwargs.get("followed_topic_push_notify", False),
+            followed_topic_wildcard_mention_email_notify=kwargs.get(
+                "followed_topic_wildcard_mention_email_notify", False
+            ),
+            followed_topic_wildcard_mention_push_notify=kwargs.get(
+                "followed_topic_wildcard_mention_push_notify", False
+            ),
             sender_is_muted=kwargs.get("sender_is_muted", False),
             disable_external_notifications=kwargs.get("disable_external_notifications", False),
         )
