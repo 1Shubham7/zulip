@@ -144,10 +144,10 @@ export function create_message_object() {
         message.private_message_recipient = recipient;
         message.to_user_ids = people.email_list_to_user_ids_string(emails);
 
-        // Note: The `undefined` case is for situations like the
-        // is_zephyr_mirror_realm case where users may be
-        // automatically created when you try to send a private
-        // message to their email address.
+        // Note: The `undefined` case is for situations like
+        // the is_zephyr_mirror_realm case where users may
+        // be automatically created when you try to send a
+        // direct message to their email address.
         if (message.to_user_ids !== undefined) {
             message.to = people.user_ids_string_to_ids_array(message.to_user_ids);
         }
@@ -187,6 +187,7 @@ export function clear_compose_box() {
     compose_ui.autosize_textarea($("#compose-textarea"));
     compose_banner.clear_errors();
     compose_banner.clear_warnings();
+    compose_banner.clear_uploads();
     compose_ui.hide_compose_spinner();
     popover_menus.reset_selected_schedule_timestamp();
 }

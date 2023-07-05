@@ -245,12 +245,12 @@ def get_recipient_ids(
     return to, recipient_type_str
 
 
-def get_realm_emoji_cache_key(realm: "Realm") -> str:
-    return f"realm_emoji:{realm.id}"
+def get_realm_emoji_cache_key(realm_id: int) -> str:
+    return f"realm_emoji:{realm_id}"
 
 
-def get_active_realm_emoji_cache_key(realm: "Realm") -> str:
-    return f"active_realm_emoji:{realm.id}"
+def get_active_realm_emoji_cache_key(realm_id: int) -> str:
+    return f"active_realm_emoji:{realm_id}"
 
 
 # This simple call-once caching saves ~500us in auth_enabled_helper,
@@ -845,13 +845,13 @@ class Realm(models.Model):  # type: ignore[django-manager-missing] # django-stub
 
     # `realm` instead of `self` here to make sure the parameters of the cache key
     # function matches the original method.
-    @cache_with_key(get_realm_emoji_cache_key, timeout=3600 * 24 * 7)
+    @cache_with_key(lambda realm: get_realm_emoji_cache_key(realm.id), timeout=3600 * 24 * 7)
     def get_emoji(realm) -> Dict[str, EmojiInfo]:  # noqa: N805
-        return get_realm_emoji_uncached(realm)
+        return get_realm_emoji_uncached(realm.id)
 
-    @cache_with_key(get_active_realm_emoji_cache_key, timeout=3600 * 24 * 7)
+    @cache_with_key(lambda realm: get_active_realm_emoji_cache_key(realm.id), timeout=3600 * 24 * 7)
     def get_active_emoji(realm) -> Dict[str, EmojiInfo]:  # noqa: N805
-        return get_active_realm_emoji_uncached(realm)
+        return get_active_realm_emoji_uncached(realm.id)
 
     def get_admin_users_and_bots(
         self, include_realm_owners: bool = True
@@ -950,7 +950,9 @@ class Realm(models.Model):  # type: ignore[django-manager-missing] # django-stub
 
     # `realm` instead of `self` here to make sure the parameters of the cache key
     # function matches the original method.
-    @cache_with_key(get_realm_used_upload_space_cache_key, timeout=3600 * 24 * 7)
+    @cache_with_key(
+        lambda realm: get_realm_used_upload_space_cache_key(realm.id), timeout=3600 * 24 * 7
+    )
     def currently_used_upload_space_bytes(realm) -> int:  # noqa: N805
         used_space = Attachment.objects.filter(realm=realm).aggregate(Sum("size"))["size__sum"]
         if used_space is None:
@@ -1165,13 +1167,13 @@ class RealmEmoji(models.Model):
         return f"{self.realm.string_id}: {self.id} {self.name} {self.deactivated} {self.file_name}"
 
 
-def get_realm_emoji_dicts(realm: Realm, only_active_emojis: bool = False) -> Dict[str, EmojiInfo]:
+def get_realm_emoji_dicts(realm_id: int, only_active_emojis: bool = False) -> Dict[str, EmojiInfo]:
     # RealmEmoji objects with file_name=None are still in the process
     # of being uploaded, and we expect to be cleaned up by a
     # try/finally block if the upload fails, so it's correct to
     # exclude them.
     query = (
-        RealmEmoji.objects.filter(realm=realm)
+        RealmEmoji.objects.filter(realm_id=realm_id)
         .exclude(
             file_name=None,
         )
@@ -1212,12 +1214,12 @@ def get_realm_emoji_dicts(realm: Realm, only_active_emojis: bool = False) -> Dic
     return d
 
 
-def get_realm_emoji_uncached(realm: Realm) -> Dict[str, EmojiInfo]:
-    return get_realm_emoji_dicts(realm)
+def get_realm_emoji_uncached(realm_id: int) -> Dict[str, EmojiInfo]:
+    return get_realm_emoji_dicts(realm_id)
 
 
-def get_active_realm_emoji_uncached(realm: Realm) -> Dict[str, EmojiInfo]:
-    realm_emojis = get_realm_emoji_dicts(realm, only_active_emojis=True)
+def get_active_realm_emoji_uncached(realm_id: int) -> Dict[str, EmojiInfo]:
+    realm_emojis = get_realm_emoji_dicts(realm_id, only_active_emojis=True)
     d = {}
     for emoji_id, emoji_dict in realm_emojis.items():
         d[emoji_dict["name"]] = emoji_dict
@@ -1235,13 +1237,15 @@ def flush_realm_emoji(*, instance: RealmEmoji, **kwargs: object) -> None:
         # such an object shouldn't have been cached yet, and this
         # function will be called again when file_name is set.
         return
-    realm = instance.realm
+    realm_id = instance.realm_id
     cache_set(
-        get_realm_emoji_cache_key(realm), get_realm_emoji_uncached(realm), timeout=3600 * 24 * 7
+        get_realm_emoji_cache_key(realm_id),
+        get_realm_emoji_uncached(realm_id),
+        timeout=3600 * 24 * 7,
     )
     cache_set(
-        get_active_realm_emoji_cache_key(realm),
-        get_active_realm_emoji_uncached(realm),
+        get_active_realm_emoji_cache_key(realm_id),
+        get_active_realm_emoji_uncached(realm_id),
         timeout=3600 * 24 * 7,
     )
 
@@ -1443,11 +1447,11 @@ class Recipient(models.Model):
     which is the ID of the UserProfile/Stream/Huddle object containing
     all the metadata for the audience. There are 3 recipient types:
 
-    1. 1:1 private message: The type_id is the ID of the UserProfile
+    1. 1:1 direct message: The type_id is the ID of the UserProfile
        who will receive any message to this Recipient. The sender
        of such a message is represented separately.
     2. Stream message: The type_id is the ID of the associated Stream.
-    3. Group private message: In Zulip, group private messages are
+    3. Group direct message: In Zulip, group direct messages are
        represented by Huddle objects, which encode the set of users
        in the conversation. The type_id is the ID of the associated Huddle
        object; the set of users is usually retrieved via the Subscription
@@ -1461,11 +1465,11 @@ class Recipient(models.Model):
     type = models.PositiveSmallIntegerField(db_index=True)
     # Valid types are {personal, stream, huddle}
 
-    # The type for 1:1 private messages.
+    # The type for 1:1 direct messages.
     PERSONAL = 1
     # The type for stream messages.
     STREAM = 2
-    # The type group private messages.
+    # The type group direct messages.
     HUDDLE = 3
 
     class Meta:
@@ -1596,7 +1600,7 @@ class UserBaseSettings(models.Model):
     enable_followed_topic_audible_notifications = models.BooleanField(default=True)
     enable_followed_topic_wildcard_mentions_notify = models.BooleanField(default=True)
 
-    # PM + @-mention notifications.
+    # Direct message + @-mention notifications.
     enable_desktop_notifications = models.BooleanField(default=True)
     pm_content_in_desktop_notifications = models.BooleanField(default=True)
     enable_sounds = models.BooleanField(default=True)
@@ -2252,6 +2256,8 @@ class UserGroup(models.Model):  # type: ignore[django-manager-missing] # django-
     description = models.TextField(default="")
     is_system_group = models.BooleanField(default=False)
 
+    can_mention_group = models.ForeignKey("self", on_delete=models.RESTRICT)
+
     # Names for system groups.
     FULL_MEMBERS_GROUP_NAME = "@role:fullmembers"
     EVERYONE_ON_INTERNET_GROUP_NAME = "@role:internet"
@@ -2286,6 +2292,17 @@ class UserGroup(models.Model):  # type: ignore[django-manager-missing] # django-
             "name": EVERYONE_GROUP_NAME,
             "description": "Everyone in this organization, including guests",
         },
+    }
+
+    GROUP_PERMISSION_SETTINGS = {
+        "can_mention_group": GroupPermissionSetting(
+            require_system_group=False,
+            allow_internet_group=False,
+            allow_owners_group=False,
+            allow_nobody_group=True,
+            default_group_name=EVERYONE_GROUP_NAME,
+            default_for_system_groups=NOBODY_GROUP_NAME,
+        ),
     }
 
     class Meta:
@@ -2643,6 +2660,7 @@ class Stream(models.Model):
             allow_internet_group=False,
             allow_owners_group=False,
             allow_nobody_group=False,
+            default_group_name=UserGroup.ADMINISTRATORS_GROUP_NAME,
         ),
     }
 
@@ -3330,9 +3348,9 @@ class AbstractUserMessage(models.Model):
         # their history via e.g. starring the message.  This is
         # important accounting for the "Subscribed to stream" dividers.
         "historical",
-        # Whether the message is a private message; this flag is a
+        # Whether the message is a direct message; this flag is a
         # denormalization of message.recipient.type to support an
-        # efficient index on UserMessage for a user's private messages.
+        # efficient index on UserMessage for a user's direct messages.
         "is_private",
         # Whether we've sent a push notification to the user's mobile
         # devices for this message that has not been revoked.
@@ -3685,7 +3703,7 @@ def validate_attachment_request(
 
     messages = attachment.messages.all()
     if UserMessage.objects.filter(user_profile=user_profile, message__in=messages).exists():
-        # If it was sent in a private message or private stream
+        # If it was sent in a direct message or private stream
         # message, then anyone who received that message can access it.
         return True
 
@@ -3751,7 +3769,7 @@ class Subscription(models.Model):
     """Keeps track of which users are part of the
     audience for a given Recipient object.
 
-    For private and group private message Recipient objects, only the
+    For 1:1 and group direct message Recipient objects, only the
     user_profile and recipient fields have any meaning, defining the
     immutable set of users who are in the audience for that Recipient.
 
@@ -4026,7 +4044,7 @@ def get_source_profile(email: str, realm_id: int) -> Optional[UserProfile]:
         return None
 
 
-@cache_with_key(bot_dicts_in_realm_cache_key, timeout=3600 * 24 * 7)
+@cache_with_key(lambda realm: bot_dicts_in_realm_cache_key(realm.id), timeout=3600 * 24 * 7)
 def get_bot_dicts_in_realm(realm: Realm) -> List[Dict[str, Any]]:
     return list(UserProfile.objects.filter(realm=realm, is_bot=True).values(*bot_dict_fields))
 
@@ -4038,7 +4056,7 @@ def is_cross_realm_bot_email(email: str) -> bool:
 class Huddle(models.Model):
     """
     Represents a group of individuals who may have a
-    group private message conversation together.
+    group direct message conversation together.
 
     The membership of the Huddle is stored in the Subscription table just like with
     Streams - for each user in the Huddle, there is a Subscription object
@@ -4282,15 +4300,15 @@ class MissedMessageEmailAddress(models.Model):
 
 
 class NotificationTriggers:
-    # "private_message" is for 1:1 PMs as well as huddles
+    # "private_message" is for 1:1 direct messages as well as huddles
     PRIVATE_MESSAGE = "private_message"
     MENTION = "mentioned"
-    WILDCARD_MENTION = "wildcard_mentioned"
+    STREAM_WILDCARD_MENTION = "stream_wildcard_mentioned"
     STREAM_PUSH = "stream_push_notify"
     STREAM_EMAIL = "stream_email_notify"
     FOLLOWED_TOPIC_PUSH = "followed_topic_push_notify"
     FOLLOWED_TOPIC_EMAIL = "followed_topic_email_notify"
-    FOLLOWED_TOPIC_WILDCARD_MENTION = "followed_topic_wildcard_mentioned"
+    STREAM_WILDCARD_MENTION_IN_FOLLOWED_TOPIC = "stream_wildcard_mentioned_in_followed_topic"
 
 
 class ScheduledMessageNotificationEmail(models.Model):
@@ -4306,10 +4324,13 @@ class ScheduledMessageNotificationEmail(models.Model):
     EMAIL_NOTIFICATION_TRIGGER_CHOICES = [
         (NotificationTriggers.PRIVATE_MESSAGE, "Private message"),
         (NotificationTriggers.MENTION, "Mention"),
-        (NotificationTriggers.WILDCARD_MENTION, "Wildcard mention"),
+        (NotificationTriggers.STREAM_WILDCARD_MENTION, "Stream wildcard mention"),
         (NotificationTriggers.STREAM_EMAIL, "Stream notifications enabled"),
         (NotificationTriggers.FOLLOWED_TOPIC_EMAIL, "Followed topic notifications enabled"),
-        (NotificationTriggers.FOLLOWED_TOPIC_WILDCARD_MENTION, "Followed topic wildcard mention"),
+        (
+            NotificationTriggers.STREAM_WILDCARD_MENTION_IN_FOLLOWED_TOPIC,
+            "Stream wildcard mention in followed topic",
+        ),
     ]
 
     trigger = models.TextField(choices=EMAIL_NOTIFICATION_TRIGGER_CHOICES)
@@ -4944,14 +4965,14 @@ class AlertWord(models.Model):
         unique_together = ("user_profile", "word")
 
 
-def flush_realm_alert_words(realm: Realm) -> None:
-    cache_delete(realm_alert_words_cache_key(realm))
-    cache_delete(realm_alert_words_automaton_cache_key(realm))
+def flush_realm_alert_words(realm_id: int) -> None:
+    cache_delete(realm_alert_words_cache_key(realm_id))
+    cache_delete(realm_alert_words_automaton_cache_key(realm_id))
 
 
 def flush_alert_word(*, instance: AlertWord, **kwargs: object) -> None:
-    realm = instance.realm
-    flush_realm_alert_words(realm)
+    realm_id = instance.realm_id
+    flush_realm_alert_words(realm_id)
 
 
 post_save.connect(flush_alert_word, sender=AlertWord)

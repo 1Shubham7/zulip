@@ -1,5 +1,6 @@
 import md5 from "blueimp-md5";
 import {format, utcToZonedTime} from "date-fns-tz";
+import assert from "minimalistic-assert";
 
 import * as typeahead from "../shared/src/typeahead";
 
@@ -58,9 +59,17 @@ export function get_users_from_ids(user_ids) {
     return user_ids.map((user_id) => get_by_user_id(user_id));
 }
 
-export function get_by_user_id(user_id, ignore_missing) {
-    if (!people_by_user_id_dict.has(user_id) && !ignore_missing) {
-        blueslip.error("Unknown user_id in get_by_user_id", {user_id});
+// Use this function only when you are sure that user_id is valid.
+export function get_by_user_id(user_id) {
+    const person = people_by_user_id_dict.get(user_id);
+    assert(person, `Unknown user_id in get_by_user_id: ${user_id}`);
+    return person;
+}
+
+// This is type unsafe version of get_by_user_id for the callers that expects undefined values.
+export function maybe_get_user_by_id(user_id) {
+    if (!people_by_user_id_dict.has(user_id)) {
+        blueslip.error("Unknown user_id in maybe_get_user_by_id", {user_id});
         return undefined;
     }
     return people_by_user_id_dict.get(user_id);
@@ -237,11 +246,11 @@ export function get_participants_from_user_ids_string(user_ids_string) {
     let user_ids = user_ids_string_to_ids_array(user_ids_string);
     // Convert to set to ensure there are no duplicate ids.
     user_ids = new Set(user_ids);
-    // For group PMs or 1:1 private messages, the user_ids_string
-    // contains just the other user, so we need to add ourselves if not
-    // already present. For PM to self, the current user is already present,
-    // in user_ids_string, so we don't need to add it which is take care of
-    // by user_ids being a `Set`.
+    // For group or 1:1 direct messages, the user_ids_string contains
+    // just the other user, so we need to add ourselves if not already
+    // present. For a direct message to oneself, the current user is
+    // already present, in user_ids_string, so we don't need to add it
+    // which is take care of by user_ids being a `Set`.
     user_ids.add(my_user_id);
     return user_ids;
 }
@@ -347,7 +356,7 @@ export function get_full_names_for_poll_option(user_ids) {
 }
 
 export function get_display_full_name(user_id) {
-    const person = get_by_user_id(user_id);
+    const person = maybe_get_user_by_id(user_id);
     if (!person) {
         blueslip.error("Unknown user id", {user_id});
         return "?";
@@ -380,7 +389,7 @@ export function get_recipients(user_ids_string) {
     const {other_ids} = _calc_user_and_other_ids(user_ids_string);
 
     if (other_ids.length === 0) {
-        // private message with oneself
+        // direct message with oneself
         return my_full_name();
     }
 
@@ -453,8 +462,8 @@ export function concat_huddle(user_ids, user_id) {
 export function pm_lookup_key_from_user_ids(user_ids) {
     /*
         The server will sometimes include our own user id
-        in keys for PMs, but we only want our user id if
-        we sent a message to ourself.
+        in keys for direct messages, but we only want our
+        user id if we sent a direct message to ourself.
     */
     user_ids = sorted_other_user_ids(user_ids);
     return user_ids.join(",");
@@ -528,7 +537,7 @@ export function pm_with_url(message) {
     if (user_ids.length > 1) {
         suffix = "group";
     } else {
-        const person = get_by_user_id(user_ids[0]);
+        const person = maybe_get_user_by_id(user_ids[0]);
         if (person && person.full_name) {
             suffix = person.full_name.replaceAll(/[ "%/<>`\p{C}]+/gu, "-");
         } else {
@@ -579,7 +588,8 @@ export function pm_with_operand_ids(operand) {
         return undefined;
     }
 
-    // If your email is included in a PM group with other people, just ignore it
+    // If your email is included in a group direct message with other people,
+    // then ignore it.
     if (persons.length > 1) {
         const my_user = people_by_user_id_dict.get(my_user_id);
         persons = persons.filter((person) => person !== my_user);
@@ -616,9 +626,9 @@ export function emails_to_slug(emails_string) {
 export function slug_to_emails(slug) {
     /*
         It's not super important to be flexible about
-        PM-related slugs, since you would rarely post
-        them to the web, but we we do want to support
-        reasonable variations:
+        direct message related slugs, since you would
+        rarely post them to the web, but we we do want
+        to support reasonable variations:
 
             99-alice@example.com
             99
@@ -654,7 +664,7 @@ export function exclude_me_from_string(user_ids_string) {
 }
 
 export function format_small_avatar_url(raw_url) {
-    const url = new URL(raw_url, location);
+    const url = new URL(raw_url, location.origin);
     url.search += (url.search ? "&" : "") + "s=50";
     return url.href;
 }
@@ -685,7 +695,7 @@ export function user_can_direct_message(recipient_ids_string) {
     // message to the target user (or group of users) represented by a
     // user ids string.
 
-    // Regardless of policy, we allow sending private messages to bots.
+    // Regardless of policy, we allow sending direct messages to bots.
     const recipient_ids = user_ids_string_to_ids_array(recipient_ids_string);
     if (recipient_ids.length === 1 && user_is_bot(recipient_ids[0])) {
         return true;
@@ -722,7 +732,7 @@ export function small_avatar_url_for_person(person) {
 function medium_gravatar_url_for_email(email) {
     const hash = md5(email.toLowerCase());
     const avatar_url = "https://secure.gravatar.com/avatar/" + hash + "?d=identicon";
-    const url = new URL(avatar_url, location);
+    const url = new URL(avatar_url, location.origin);
     url.search += (url.search ? "&" : "") + "s=500";
     return url.href;
 }
@@ -771,7 +781,7 @@ export function small_avatar_url(message) {
         // We should always have message.sender_id, except for in the
         // tutorial, where it's ok to fall back to the URL in the fake
         // messages.
-        person = get_by_user_id(message.sender_id);
+        person = maybe_get_user_by_id(message.sender_id);
     }
 
     // The first time we encounter a sender in a message, we may
@@ -971,8 +981,8 @@ export function get_recipient_count(person) {
         For searching in the search bar, we will
         have true `person` objects with `user_id`.
 
-        Likewise, we'll have user_id if we
-        are tab-completing a user to send a PM
+        Likewise, we'll have user_id if we are
+        tab-completing a user to send a direct message
         to (but we only get called if we're not
         currently in a stream view).
 
@@ -1002,15 +1012,17 @@ export function get_message_people() {
     /*
         message_people are roughly the people who have
         actually sent messages that are currently
-        showing up on your feed.  These people
+        showing up on your feed. These people
         are important--we give them preference
         over other users in certain search
         suggestions, since non-message-people are
         presumably either not very active or
         possibly subscribed to streams you don't
-        care about.  message_people also includes
-        people whom you have sent PMs, but look
-        at the message_store code to see the precise
+        care about.
+
+        message_people also includes people whom
+        you have sent direct messages, but look at
+        the message_store code to see the precise
         semantics
     */
     const message_people = util.try_parse_as_truthy(
@@ -1263,7 +1275,7 @@ export function add_cross_realm_user(person) {
 export function deactivate(person) {
     // We don't fully remove a person from all of our data
     // structures, because deactivated users can be part
-    // of somebody's PM list.
+    // of somebody's direct message list.
     active_user_dict.delete(person.user_id);
     non_active_user_dict.set(person.user_id, person);
 }
@@ -1282,7 +1294,48 @@ export function report_late_add(user_id, email) {
     }
 }
 
-export function extract_people_from_message(message) {
+function make_user(user_id, email, full_name) {
+    // Used to create fake user objects for users who we see via some
+    // API call, such as fetching a message sent by the user, before
+    // we receive a full user object for the user via the events
+    // system.
+    //
+    // This function is an ugly hack in that it makes up a lot of
+    // values, but usually thesefake user objects only persist for
+    // less than a second before being replaced by a real user when
+    // the events system receives the user-created event for the new
+    // or newly visible user.
+    return {
+        user_id,
+        email,
+        full_name,
+        role: settings_config.user_role_values.member.code,
+        is_active: true,
+        is_admin: false,
+        is_owner: false,
+        is_guest: false,
+        is_bot: false,
+        is_moderator: false,
+        is_billing_admin: false,
+        // We explicitly don't set `avatar_url` for fake person objects so that fallback code
+        // will ask the server or compute a gravatar URL only once we need the avatar URL,
+        // it's important for performance that we not hash every user's email to get gravatar URLs.
+        avatar_url: undefined,
+        avatar_version: 0,
+        timezone: "",
+        date_joined: "",
+        delivery_email: null,
+        profile_data: {},
+        bot_owner_id: undefined,
+        bot_type: null,
+
+        // This property allows us to distinguish actual server person
+        // objects from fake person objects generated by this function.
+        is_missing_server_data: true,
+    };
+}
+
+function get_involved_people(message) {
     let involved_people;
 
     switch (message.type) {
@@ -1290,7 +1343,7 @@ export function extract_people_from_message(message) {
             involved_people = [
                 {
                     full_name: message.sender_full_name,
-                    user_id: message.sender_id,
+                    id: message.sender_id,
                     email: message.sender_email,
                 },
             ];
@@ -1304,13 +1357,19 @@ export function extract_people_from_message(message) {
             involved_people = [];
     }
 
+    return involved_people;
+}
+
+export function extract_people_from_message(message) {
+    const involved_people = get_involved_people(message);
+
     // Add new people involved in this message to the people list
     for (const person of involved_people) {
         if (person.unknown_local_echo_user) {
             continue;
         }
 
-        const user_id = person.user_id || person.id;
+        const user_id = person.id;
 
         if (people_by_user_id_dict.has(user_id)) {
             continue;
@@ -1318,13 +1377,7 @@ export function extract_people_from_message(message) {
 
         report_late_add(user_id, person.email);
 
-        _add_user({
-            email: person.email,
-            user_id,
-            full_name: person.full_name,
-            is_admin: person.is_realm_admin || false,
-            is_bot: person.is_bot || false,
-        });
+        _add_user(make_user(user_id, person.email, person.full_name));
     }
 }
 
@@ -1362,7 +1415,8 @@ export function maybe_incr_recipient_count(message) {
         return;
     }
 
-    // Track the number of PMs we've sent to this person to improve autocomplete
+    // Track the number of direct messages we've sent to this person
+    // to improve autocomplete
     for (const recip of message.display_recipient) {
         if (recip.unknown_local_echo_user) {
             continue;

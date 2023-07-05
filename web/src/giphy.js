@@ -117,7 +117,7 @@ async function renderGIPHYGrid(targetEl) {
                     );
                     hide_giphy_popover();
                 },
-                onGifVisible(gif, e) {
+                onGifVisible(_gif, e) {
                     // Set tabindex for all the GIFs that
                     // are visible to the user. This allows
                     // user to navigate the GIFs using tab.
@@ -214,7 +214,7 @@ export function initialize() {
 
     $("body").on("click", "#giphy_search_clear", async (e) => {
         e.stopPropagation();
-        $("#giphy-search-query").val("");
+        $("#giphy-search-query").val("").trigger("focus");
         await update_grid_with_search_term();
     });
 

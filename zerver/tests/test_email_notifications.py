@@ -691,7 +691,48 @@ class TestMissedMessages(ZulipTestCase):
             trigger="mentioned",
         )
 
-    def _extra_context_in_missed_stream_messages_wildcard_mention(
+    def _extra_context_in_missed_stream_messages_stream_wildcard_mention_in_followed_topic(
+        self, send_as_user: bool, show_message_content: bool = True
+    ) -> None:
+        for i in range(1, 6):
+            self.send_stream_message(self.example_user("othello"), "Denmark", content=str(i))
+        self.send_stream_message(self.example_user("othello"), "Denmark", "11", topic_name="test2")
+        msg_id = self.send_stream_message(self.example_user("othello"), "Denmark", "@**all**")
+
+        if show_message_content:
+            verify_body_include = [
+                "Othello, the Moor of Venice: > 1 > 2 > 3 > 4 > 5 > @**all** -- ",
+                "You are receiving this because you have wildcard mention notifications enabled for topics you follow.",
+            ]
+            email_subject = "#Denmark > test"
+            verify_body_does_not_include: List[str] = []
+        else:
+            # Test in case if message content in missed email message are disabled.
+            verify_body_include = [
+                "This email does not include message content because you have disabled message ",
+                "http://zulip.testserver/help/pm-mention-alert-notifications ",
+                "View or reply in Zulip Dev Zulip",
+                " Manage email preferences: http://zulip.testserver/#settings/notifications",
+            ]
+            email_subject = "New messages"
+            verify_body_does_not_include = [
+                "Othello, the Moor of Venice",
+                "1 2 3 4 5 @**all**",
+                "private",
+                "group",
+                "Reply to this email directly, or view it in Zulip Dev Zulip",
+            ]
+        self._test_cases(
+            msg_id,
+            verify_body_include,
+            email_subject,
+            send_as_user,
+            show_message_content=show_message_content,
+            verify_body_does_not_include=verify_body_does_not_include,
+            trigger="stream_wildcard_mentioned_in_followed_topic",
+        )
+
+    def _extra_context_in_missed_stream_messages_stream_wildcard_mention(
         self, send_as_user: bool, show_message_content: bool = True
     ) -> None:
         for i in range(1, 6):
@@ -730,7 +771,7 @@ class TestMissedMessages(ZulipTestCase):
             send_as_user,
             show_message_content=show_message_content,
             verify_body_does_not_include=verify_body_does_not_include,
-            trigger="wildcard_mentioned",
+            trigger="stream_wildcard_mentioned",
         )
 
     def _extra_context_in_missed_stream_messages_email_notify(self, send_as_user: bool) -> None:
@@ -1061,7 +1102,7 @@ class TestMissedMessages(ZulipTestCase):
         for text in expected_email_include:
             self.assertIn(text, self.normalize_string(mail.outbox[0].body))
 
-    def test_user_group_over_wildcard_mention_priority(self) -> None:
+    def test_user_group_over_stream_wildcard_mention_in_followed_topic_priority(self) -> None:
         hamlet = self.example_user("hamlet")
         cordelia = self.example_user("cordelia")
         othello = self.example_user("othello")
@@ -1070,7 +1111,9 @@ class TestMissedMessages(ZulipTestCase):
             get_realm("zulip"), "hamlet_and_cordelia", [hamlet, cordelia], acting_user=None
         )
 
-        wildcard_mentioned_message_id = self.send_stream_message(othello, "Denmark", "@**all**")
+        stream_wildcard_mentioned_in_followed_topic_message_id = self.send_stream_message(
+            othello, "Denmark", "@**all**"
+        )
         user_group_mentioned_message_id = self.send_stream_message(
             othello, "Denmark", "@*hamlet_and_cordelia*"
         )
@@ -1079,8 +1122,8 @@ class TestMissedMessages(ZulipTestCase):
             hamlet.id,
             [
                 {
-                    "message_id": wildcard_mentioned_message_id,
-                    "trigger": "wildcard_mentioned",
+                    "message_id": stream_wildcard_mentioned_in_followed_topic_message_id,
+                    "trigger": "stream_wildcard_mentioned_in_followed_topic",
                     "mentioned_user_group_id": None,
                 },
                 {
@@ -1099,12 +1142,80 @@ class TestMissedMessages(ZulipTestCase):
         for text in expected_email_include:
             self.assertIn(text, self.normalize_string(mail.outbox[0].body))
 
-    def test_wildcard_over_stream_mention_priority(self) -> None:
+    def test_stream_wildcard_in_followed_topic_over_stream_wildcard_mention_priority(self) -> None:
         hamlet = self.example_user("hamlet")
         othello = self.example_user("othello")
 
-        stream_mentioned_message_id = self.send_stream_message(othello, "Denmark", "1")
-        wildcard_mentioned_message_id = self.send_stream_message(othello, "Denmark", "@**all**")
+        stream_wildcard_mentioned_message_id = self.send_stream_message(
+            othello, "Denmark", "@**all**"
+        )
+        stream_wildcard_mentioned_in_followed_topic_message_id = self.send_stream_message(
+            othello, "Denmark", "@**all**"
+        )
+
+        handle_missedmessage_emails(
+            hamlet.id,
+            [
+                {
+                    "message_id": stream_wildcard_mentioned_message_id,
+                    "trigger": "stream_wildcard_mentioned",
+                    "mentioned_user_group_id": None,
+                },
+                {
+                    "message_id": stream_wildcard_mentioned_in_followed_topic_message_id,
+                    "trigger": "stream_wildcard_mentioned_in_followed_topic",
+                    "mentioned_user_group_id": None,
+                },
+            ],
+        )
+
+        expected_email_include = [
+            "Othello, the Moor of Venice: > @**all** > @**all** -- ",
+            "You are receiving this because you have wildcard mention notifications enabled for topics you follow.",
+        ]
+
+        for text in expected_email_include:
+            self.assertIn(text, self.normalize_string(mail.outbox[0].body))
+
+    def test_stream_wildcard_mention_over_followed_topic_notify_priority(self) -> None:
+        hamlet = self.example_user("hamlet")
+        othello = self.example_user("othello")
+
+        followed_topic_mentioned_message_id = self.send_stream_message(othello, "Denmark", "1")
+        stream_wildcard_mentioned_message_id = self.send_stream_message(
+            othello, "Denmark", "@**all**"
+        )
+
+        handle_missedmessage_emails(
+            hamlet.id,
+            [
+                {
+                    "message_id": followed_topic_mentioned_message_id,
+                    "trigger": "followed_topic_email_notify",
+                    "mentioned_user_group_id": None,
+                },
+                {
+                    "message_id": stream_wildcard_mentioned_message_id,
+                    "trigger": "stream_wildcard_mentioned",
+                    "mentioned_user_group_id": None,
+                },
+            ],
+        )
+
+        expected_email_include = [
+            "Othello, the Moor of Venice: > 1 > @**all** -- ",
+            "You are receiving this because everyone was mentioned in #Denmark.",
+        ]
+
+        for text in expected_email_include:
+            self.assertIn(text, self.normalize_string(mail.outbox[0].body))
+
+    def test_followed_topic_notify_over_stream_message_notify_priority(self) -> None:
+        hamlet = self.example_user("hamlet")
+        othello = self.example_user("othello")
+
+        stream_mentioned_message_id = self.send_stream_message(othello, "Denmark", "0")
+        followed_topic_mentioned_message_id = self.send_stream_message(othello, "Denmark", "1")
 
         handle_missedmessage_emails(
             hamlet.id,
@@ -1115,16 +1226,16 @@ class TestMissedMessages(ZulipTestCase):
                     "mentioned_user_group_id": None,
                 },
                 {
-                    "message_id": wildcard_mentioned_message_id,
-                    "trigger": "wildcard_mentioned",
+                    "message_id": followed_topic_mentioned_message_id,
+                    "trigger": "followed_topic_email_notify",
                     "mentioned_user_group_id": None,
                 },
             ],
         )
 
         expected_email_include = [
-            "Othello, the Moor of Venice: > 1 > @**all** -- ",
-            "You are receiving this because everyone was mentioned in #Denmark.",
+            "Othello, the Moor of Venice: > 0 > 1 -- ",
+            "You are receiving this because you have email notifications enabled for topics you follow.",
         ]
 
         for text in expected_email_include:
@@ -1215,7 +1326,11 @@ class TestMissedMessages(ZulipTestCase):
         )
         self._extra_context_in_missed_stream_messages_mention(False, show_message_content=False)
         mail.outbox = []
-        self._extra_context_in_missed_stream_messages_wildcard_mention(
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention_in_followed_topic(
+            False, show_message_content=False
+        )
+        mail.outbox = []
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention(
             False, show_message_content=False
         )
         mail.outbox = []
@@ -1233,11 +1348,26 @@ class TestMissedMessages(ZulipTestCase):
         self._extra_context_in_missed_stream_messages_mention(False)
 
     @override_settings(SEND_MISSED_MESSAGE_EMAILS_AS_USER=True)
-    def test_extra_context_in_missed_stream_messages_as_user_wildcard(self) -> None:
-        self._extra_context_in_missed_stream_messages_wildcard_mention(True)
+    def test_extra_context_in_missed_stream_messages_as_user_stream_wildcard_in_followed_topic(
+        self,
+    ) -> None:
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention_in_followed_topic(
+            True
+        )
 
-    def test_extra_context_in_missed_stream_messages_wildcard(self) -> None:
-        self._extra_context_in_missed_stream_messages_wildcard_mention(False)
+    def test_extra_context_in_missed_stream_messages_stream_wildcard_in_followed_topic(
+        self,
+    ) -> None:
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention_in_followed_topic(
+            False
+        )
+
+    @override_settings(SEND_MISSED_MESSAGE_EMAILS_AS_USER=True)
+    def test_extra_context_in_missed_stream_messages_as_user_stream_wildcard(self) -> None:
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention(True)
+
+    def test_extra_context_in_missed_stream_messages_stream_wildcard(self) -> None:
+        self._extra_context_in_missed_stream_messages_stream_wildcard_mention(False)
 
     @override_settings(SEND_MISSED_MESSAGE_EMAILS_AS_USER=True)
     def test_extra_context_in_missed_stream_messages_as_user_two_senders(self) -> None:
@@ -1435,7 +1565,7 @@ class TestMissedMessages(ZulipTestCase):
         msg_id = self.send_personal_message(
             cordelia,
             self.example_user("hamlet"),
-            "Let's test PM link in email notifications",
+            "Let's test a direct message link in email notifications",
         )
 
         encoded_name = "Cordelia,-Lear's-daughter"
@@ -1483,7 +1613,7 @@ class TestMissedMessages(ZulipTestCase):
         assert isinstance(mail.outbox[2], EmailMultiAlternatives)
         assert isinstance(mail.outbox[2].alternatives[0][0], str)
         self.assertEqual("> Hello\n\n--\n\nReply", mail.outbox[2].body[:18])
-        # Sender name is not appended to message for PM missed messages
+        # Sender name is not appended to message for missed direct messages
         self.assertIn(
             ">\n                    \n                        <div><p>Hello</p></div>\n",
             mail.outbox[2].alternatives[0][0],
@@ -1816,7 +1946,7 @@ class TestMissedMessages(ZulipTestCase):
                 [{"message_id": stream_mentioned_message_id, "trigger": "mentioned"}],
             )
 
-        # Private message should soft reactivate the user
+        # Direct message should soft reactivate the user
         with self.soft_deactivate_and_check_long_term_idle(hamlet, expected=False):
             # Soft reactivate the user by sending a personal message
             personal_message_id = self.send_personal_message(othello, hamlet, "Message")
@@ -1825,14 +1955,33 @@ class TestMissedMessages(ZulipTestCase):
                 [{"message_id": personal_message_id, "trigger": "private_message"}],
             )
 
-        # Wild card mention should NOT soft reactivate the user
+        # Stream wildcard mention in followed topic should NOT soft reactivate the user
+        with self.soft_deactivate_and_check_long_term_idle(hamlet, expected=True):
+            mention = "@**all**"
+            stream_mentioned_message_id = self.send_stream_message(othello, "Denmark", mention)
+            handle_missedmessage_emails(
+                hamlet.id,
+                [
+                    {
+                        "message_id": stream_mentioned_message_id,
+                        "trigger": "stream_wildcard_mentioned_in_followed_topic",
+                    }
+                ],
+            )
+
+        # Stream Wildcard mention should NOT soft reactivate the user
         with self.soft_deactivate_and_check_long_term_idle(hamlet, expected=True):
             # Soft reactivate the user by sending a personal message
             mention = "@**all**"
             stream_mentioned_message_id = self.send_stream_message(othello, "Denmark", mention)
             handle_missedmessage_emails(
                 hamlet.id,
-                [{"message_id": stream_mentioned_message_id, "trigger": "wildcard_mentioned"}],
+                [
+                    {
+                        "message_id": stream_mentioned_message_id,
+                        "trigger": "stream_wildcard_mentioned",
+                    }
+                ],
             )
 
         # Group mention should NOT soft reactivate the user

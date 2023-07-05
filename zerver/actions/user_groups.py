@@ -1,5 +1,5 @@
 import datetime
-from typing import Dict, List, Optional, Sequence, TypedDict
+from typing import Dict, List, Mapping, Optional, Sequence, TypedDict, Union
 
 import django.db.utils
 from django.db import transaction
@@ -7,7 +7,11 @@ from django.utils.timezone import now as timezone_now
 from django.utils.translation import gettext as _
 
 from zerver.lib.exceptions import JsonableError
-from zerver.lib.user_groups import access_user_group_by_id
+from zerver.lib.user_groups import (
+    access_user_group_by_id,
+    get_role_based_system_groups_dict,
+    set_defaults_for_group_settings,
+)
 from zerver.models import (
     GroupGroupMembership,
     Realm,
@@ -33,11 +37,22 @@ def create_user_group_in_database(
     *,
     acting_user: Optional[UserProfile],
     description: str = "",
+    group_settings_map: Mapping[str, UserGroup] = {},
     is_system_group: bool = False,
 ) -> UserGroup:
-    user_group = UserGroup.objects.create(
+    user_group = UserGroup(
         name=name, realm=realm, description=description, is_system_group=is_system_group
     )
+
+    for setting_name, setting_value in group_settings_map.items():
+        setattr(user_group, setting_name, setting_value)
+
+    system_groups_name_dict = get_role_based_system_groups_dict(realm)
+    user_group = set_defaults_for_group_settings(
+        user_group, group_settings_map, system_groups_name_dict
+    )
+    user_group.save()
+
     UserGroupMembership.objects.bulk_create(
         UserGroupMembership(user_profile=member, user_group=user_group) for member in members
     )
@@ -130,6 +145,7 @@ def do_send_create_user_group_event(
             id=user_group.id,
             is_system_group=user_group.is_system_group,
             direct_subgroup_ids=[direct_subgroup.id for direct_subgroup in direct_subgroups],
+            can_mention_group_id=user_group.can_mention_group_id,
         ),
     )
     send_event(user_group.realm, event, active_user_ids(user_group.realm_id))
@@ -140,12 +156,18 @@ def check_add_user_group(
     name: str,
     initial_members: List[UserProfile],
     description: str = "",
+    group_settings_map: Mapping[str, UserGroup] = {},
     *,
     acting_user: Optional[UserProfile],
 ) -> UserGroup:
     try:
         user_group = create_user_group_in_database(
-            name, initial_members, realm, description=description, acting_user=acting_user
+            name,
+            initial_members,
+            realm,
+            description=description,
+            group_settings_map=group_settings_map,
+            acting_user=acting_user,
         )
         do_send_create_user_group_event(user_group, initial_members)
         return user_group
@@ -153,7 +175,9 @@ def check_add_user_group(
         raise JsonableError(_("User group '{}' already exists.").format(name))
 
 
-def do_send_user_group_update_event(user_group: UserGroup, data: Dict[str, str]) -> None:
+def do_send_user_group_update_event(
+    user_group: UserGroup, data: Dict[str, Union[str, int]]
+) -> None:
     event = dict(type="user_group", op="update", group_id=user_group.id, data=data)
     send_event(user_group.realm, event, active_user_ids(user_group.realm_id))
 
@@ -251,3 +275,20 @@ def check_delete_user_group(
     user_group = access_user_group_by_id(user_group_id, user_profile)
     user_group.delete()
     do_send_delete_user_group_event(user_profile.realm, user_group_id, user_profile.realm.id)
+
+
+def do_change_user_group_permission_setting(
+    user_group: UserGroup,
+    setting_name: str,
+    setting_value_group: UserGroup,
+    *,
+    acting_user: Optional[UserProfile],
+) -> None:
+    setattr(user_group, setting_name, setting_value_group)
+    user_group.save()
+
+    # RealmAuditLog changes are being done in a separate PR and will be
+    # added here once that is merged.
+    setting_id_name = setting_name + "_id"
+    event_data_dict: Dict[str, Union[str, int]] = {setting_id_name: setting_value_group.id}
+    do_send_user_group_update_event(user_group, event_data_dict)

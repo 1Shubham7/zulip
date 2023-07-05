@@ -177,6 +177,22 @@ class GitHubWebhookTest(WebhookTestCase):
         expected_message = "sbansal1999 unassigned sbansal1999 from [issue #9 idk man](https://github.com/sbansal1999/testing-gh/issues/9)."
         self.check_webhook("issues__unassigned", expected_topic, expected_message)
 
+    def test_issue_labeled(self) -> None:
+        expected_topic = "testing-gh / issue #9 idk man"
+        expected_message = "[sbansal1999](https://github.com/sbansal1999) added the bug label to [Issue #9](https://github.com/sbansal1999/testing-gh/issues/9)."
+        self.check_webhook("issues__labeled", expected_topic, expected_message)
+
+    def test_issue_labeled_with_custom_topic_in_url(self) -> None:
+        self.url = self.build_webhook_url(topic="notifications")
+        expected_topic = "notifications"
+        expected_message = "[sbansal1999](https://github.com/sbansal1999) added the bug label to [Issue #9 idk man](https://github.com/sbansal1999/testing-gh/issues/9)."
+        self.check_webhook("issues__labeled", expected_topic, expected_message)
+
+    def test_issue_unlabeled(self) -> None:
+        expected_topic = "testing-gh / issue #9 idk man"
+        expected_message = "[sbansal1999](https://github.com/sbansal1999) removed the bug label from [Issue #9](https://github.com/sbansal1999/testing-gh/issues/9)."
+        self.check_webhook("issues__unlabeled", expected_topic, expected_message)
+
     def test_membership_msg(self) -> None:
         expected_message = (
             "baxterthehacker added [kdaigle](https://github.com/kdaigle) to the Contractors team."
@@ -283,6 +299,11 @@ class GitHubWebhookTest(WebhookTestCase):
         expected_topic = "notifications"
         expected_message = "baxterthehacker submitted [PR review for #1 Update the README with new information](https://github.com/baxterthehacker/public-repo/pull/1#pullrequestreview-2626884):\n\n~~~ quote\nLooks great!\n~~~"
         self.check_webhook("pull_request_review", expected_topic, expected_message)
+
+    def test_pull_request_review_msg_with_empty_body(self) -> None:
+        expected_topic = "groonga / PR #1581 grn_db_value_lock: unlock GRN_TYPE obj..."
+        expected_message = "kou submitted [PR review](https://github.com/groonga/groonga/pull/1581#pullrequestreview-1483047907)."
+        self.check_webhook("pull_request_review__empty_body", expected_topic, expected_message)
 
     def test_pull_request_review_comment_msg(self) -> None:
         expected_message = "baxterthehacker created [PR review comment](https://github.com/baxterthehacker/public-repo/pull/1#discussion_r29724692):\n\n~~~ quote\nMaybe you should use more emojji on this line.\n~~~"

@@ -28,6 +28,7 @@ from zerver.lib.webhooks.git import (
     TOPIC_WITH_PR_OR_ISSUE_INFO_TEMPLATE,
     get_commits_comment_action_message,
     get_issue_event_message,
+    get_issue_labeled_or_unlabeled_event_message,
     get_pull_request_event_message,
     get_push_commits_event_message,
     get_push_tag_event_message,
@@ -200,6 +201,22 @@ def get_issue_comment_body(helper: Helper) -> str:
         url=issue["html_url"].tame(check_string),
         number=issue["number"].tame(check_int),
         message=comment["body"].tame(check_string),
+        title=issue["title"].tame(check_string) if include_title else None,
+    )
+
+
+def get_issue_labeled_or_unlabeled_body(helper: Helper) -> str:
+    payload = helper.payload
+    include_title = helper.include_title
+    issue = payload["issue"]
+
+    return get_issue_labeled_or_unlabeled_event_message(
+        user_name=get_sender_name(payload),
+        action="added" if payload["action"].tame(check_string) == "labeled" else "removed",
+        url=issue["html_url"].tame(check_string),
+        number=issue["number"].tame(check_int),
+        label_name=payload["label"]["name"].tame(check_string),
+        user_url=get_sender_url(payload),
         title=issue["title"].tame(check_string) if include_title else None,
     )
 
@@ -501,7 +518,7 @@ def get_pull_request_review_body(helper: Helper) -> str:
         url=payload["review"]["html_url"].tame(check_string),
         type="PR review",
         title=title if include_title else None,
-        message=payload["review"]["body"].tame(check_string),
+        message=payload["review"]["body"].tame(check_none_or(check_string)),
     )
 
 
@@ -710,6 +727,7 @@ EVENT_FUNCTION_MAPPER: Dict[str, Callable[[Helper], str]] = {
     "fork": get_fork_body,
     "gollum": get_wiki_pages_body,
     "issue_comment": get_issue_comment_body,
+    "issue_labeled_or_unlabeled": get_issue_labeled_or_unlabeled_body,
     "issues": get_issue_body,
     "member": get_member_body,
     "membership": get_membership_body,
@@ -862,6 +880,12 @@ def get_zulip_event_name(
             # this means GH has actually added new actions since September 2020,
             # so it's a bit more cause for alarm
             raise UnsupportedWebhookEventTypeError(f"unsupported team action {action}")
+    elif header_event == "issues":
+        action = payload["action"].tame(check_string)
+        if action in ("labeled", "unlabeled"):
+            return "issue_labeled_or_unlabeled"
+        else:
+            return "issues"
     elif header_event in list(EVENT_FUNCTION_MAPPER.keys()):
         return header_event
     elif header_event in IGNORED_EVENTS:

@@ -1719,17 +1719,21 @@ Output:
             pm_push_notify=kwargs.get("pm_push_notify", False),
             mention_email_notify=kwargs.get("mention_email_notify", False),
             mention_push_notify=kwargs.get("mention_push_notify", False),
-            wildcard_mention_email_notify=kwargs.get("wildcard_mention_email_notify", False),
-            wildcard_mention_push_notify=kwargs.get("wildcard_mention_push_notify", False),
+            stream_wildcard_mention_email_notify=kwargs.get(
+                "stream_wildcard_mention_email_notify", False
+            ),
+            stream_wildcard_mention_push_notify=kwargs.get(
+                "stream_wildcard_mention_push_notify", False
+            ),
             stream_email_notify=kwargs.get("stream_email_notify", False),
             stream_push_notify=kwargs.get("stream_push_notify", False),
             followed_topic_email_notify=kwargs.get("followed_topic_email_notify", False),
             followed_topic_push_notify=kwargs.get("followed_topic_push_notify", False),
-            followed_topic_wildcard_mention_email_notify=kwargs.get(
-                "followed_topic_wildcard_mention_email_notify", False
+            stream_wildcard_mention_in_followed_topic_email_notify=kwargs.get(
+                "stream_wildcard_mention_in_followed_topic_email_notify", False
             ),
-            followed_topic_wildcard_mention_push_notify=kwargs.get(
-                "followed_topic_wildcard_mention_push_notify", False
+            stream_wildcard_mention_in_followed_topic_push_notify=kwargs.get(
+                "stream_wildcard_mention_in_followed_topic_push_notify", False
             ),
             sender_is_muted=kwargs.get("sender_is_muted", False),
             disable_external_notifications=kwargs.get("disable_external_notifications", False),
@@ -1945,7 +1949,7 @@ You can fix this by adding "{complete_event_type}" to ALL_EVENT_TYPES for this w
         We simulate the delivery of the payload with `content_type`,
         and you can pass other headers via `extra`.
 
-        For the rare cases of webhooks actually sending private messages,
+        For the rare cases of webhooks actually sending direct messages,
         see send_and_test_private_message.
 
         When no message is expected to be sent, set `expect_noop` to True.
@@ -2014,7 +2018,7 @@ one or more new messages.
     ) -> Message:
         """
         For the rare cases that you are testing a webhook that sends
-        private messages, use this function.
+        direct messages, use this function.
 
         Most webhooks send to streams, and you will want to look at
         check_webhook.

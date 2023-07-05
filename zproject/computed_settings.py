@@ -159,7 +159,7 @@ ALLOWED_HOSTS += [EXTERNAL_HOST_WITHOUT_PORT, "." + EXTERNAL_HOST_WITHOUT_PORT]
 # ... and with the hosts in REALM_HOSTS.
 ALLOWED_HOSTS += REALM_HOSTS.values()
 
-MIDDLEWARE = (
+MIDDLEWARE = [
     "zerver.middleware.TagRequests",
     "zerver.middleware.SetRemoteAddrFromRealIpHeader",
     "zerver.middleware.RequestContext",
@@ -176,13 +176,14 @@ MIDDLEWARE = (
     "django.middleware.common.CommonMiddleware",
     "zerver.middleware.LocaleMiddleware",
     "zerver.middleware.HostDomainMiddleware",
+    "zerver.middleware.DetectProxyMisconfiguration",
     "django.middleware.csrf.CsrfViewMiddleware",
     # Make sure 2FA middlewares come after authentication middleware.
     "django_otp.middleware.OTPMiddleware",  # Required by two factor auth.
     "two_factor.middleware.threadlocals.ThreadLocals",  # Required by Twilio
     # Needs to be after CommonMiddleware, which sets Content-Length
     "zerver.middleware.FinalizeOpenGraphDescription",
-)
+]
 
 AUTH_USER_MODEL = "zerver.UserProfile"
 

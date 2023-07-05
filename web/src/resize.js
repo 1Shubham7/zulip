@@ -171,14 +171,13 @@ export function handler() {
 
     if (new_width !== _old_width) {
         _old_width = new_width;
-        condense.clear_message_content_height_cache();
     }
     resize_page_components();
     compose_ui.autosize_textarea($("#compose-textarea"));
     update_recent_topics_filters_height();
 
     // Re-compute and display/remove [More] links to messages
-    condense.condense_and_collapse($(".message_table .message_row"));
+    condense.condense_and_collapse(message_lists.all_current_message_rows());
 
     // This function might run onReady (if we're in a narrow window),
     // but before we've loaded in the messages; in that case, don't

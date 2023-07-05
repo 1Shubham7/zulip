@@ -539,8 +539,6 @@ export function activate(raw_operators, opts) {
         }
         compose_closed_ui.update_reply_recipient_label();
 
-        search.update_button_visibility();
-
         compose_actions.on_narrow(opts);
 
         const current_filter = narrow_state.filter();
@@ -549,7 +547,7 @@ export function activate(raw_operators, opts) {
         pm_list.handle_narrow_activated(current_filter);
         stream_list.handle_narrow_activated(current_filter);
         typing_events.render_notifications_for_narrow();
-        message_view_header.initialize();
+        message_view_header.render_title_area();
         unread_ui.update_unread_banner();
 
         // It is important to call this after other important updates
@@ -918,23 +916,32 @@ export function by_recipient(target_id, opts) {
     // don't use message_lists.current as it won't work for muted messages or for out-of-narrow links
     const message = message_store.get(target_id);
 
-    if (
-        user_settings.web_mark_read_on_scroll_policy !==
-        web_mark_read_on_scroll_policy_values.never.code
-    ) {
-        // We don't check message_list.can_mark_messages_read
-        // here because the target message_list isn't initialized;
-        // but the targeted message is about to be marked read
-        // in the new view.
-        unread_ops.notify_server_message_read(message);
-    }
-
     switch (message.type) {
         case "private":
+            if (
+                user_settings.web_mark_read_on_scroll_policy !==
+                web_mark_read_on_scroll_policy_values.never.code
+            ) {
+                // We don't check message_list.can_mark_messages_read
+                // here because the target message_list isn't initialized;
+                // but the targeted message is about to be marked read
+                // in the new view.
+                unread_ops.notify_server_message_read(message);
+            }
             by("dm", message.reply_to, opts);
             break;
 
         case "stream":
+            if (
+                user_settings.web_mark_read_on_scroll_policy ===
+                web_mark_read_on_scroll_policy_values.always.code
+            ) {
+                // We don't check message_list.can_mark_messages_read
+                // here because the target message_list isn't initialized;
+                // but the targeted message is about to be marked read
+                // in the new view.
+                unread_ops.notify_server_message_read(message);
+            }
             by("stream", message.stream, opts);
             break;
     }
@@ -991,7 +998,7 @@ function handle_post_narrow_deactivate_processes() {
     message_edit.handle_narrow_deactivated();
     widgetize.set_widgets_for_list();
     typing_events.render_notifications_for_narrow();
-    message_view_header.initialize();
+    message_view_header.render_title_area();
     update_narrow_title(narrow_state.filter());
     message_feed_top_notices.update_top_of_narrow_notices(message_lists.home);
 }

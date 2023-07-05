@@ -558,7 +558,7 @@ class RealmImportExportTest(ExportFile):
             [self.example_user("cordelia"), self.example_user("ZOE"), self.example_user("othello")],
         )
 
-        # Create PMs
+        # Create direct messages
         pm_a_msg_id = self.send_personal_message(
             self.example_user("AARON"), self.example_user("othello")
         )
@@ -1230,6 +1230,11 @@ class RealmImportExportTest(ExportFile):
             direct_subgroups = usergroup.direct_subgroups.all()
             direct_subgroup_names = {group.name for group in direct_subgroups}
             return direct_subgroup_names
+
+        @getter
+        def get_user_group_can_mention_group_setting(r: Realm) -> Set[str]:
+            user_group = UserGroup.objects.get(realm=r, name="hamletcharacters")
+            return user_group.can_mention_group.name
 
         # test botstoragedata and botconfigdata
         @getter

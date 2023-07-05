@@ -36,6 +36,7 @@ from zerver.lib.url_encoding import (
 )
 from zerver.models import (
     Message,
+    NotificationTriggers,
     Realm,
     Recipient,
     Stream,
@@ -411,12 +412,13 @@ def do_send_missedmessage_events_reply_in_zulip(
     user_profile: UserProfile, missed_messages: List[Dict[str, Any]], message_count: int
 ) -> None:
     """
-    Send a reminder email to a user if she's missed some PMs by being offline.
+    Send a reminder email to a user if she's missed some direct messages
+    by being offline.
 
     The email will have its reply to address set to a limited used email
     address that will send a Zulip message to the correct recipient. This
-    allows the user to respond to missed PMs, huddles, and @-mentions directly
-    from the email.
+    allows the user to respond to missed direct messages, huddles, and
+    @-mentions directly from the email.
 
     `user_profile` is the user to send the reminder to
     `missed_messages` is a list of dictionaries to Message objects and other data
@@ -454,14 +456,14 @@ def do_send_missedmessage_events_reply_in_zulip(
 
     context.update(
         mention="mentioned" in unique_triggers
-        or "wildcard_mentioned" in unique_triggers
-        or "followed_topic_wildcard_mentioned" in unique_triggers,
+        or "stream_wildcard_mentioned" in unique_triggers
+        or "stream_wildcard_mentioned_in_followed_topic" in unique_triggers,
         personal_mentioned=personal_mentioned,
-        wildcard_mentioned="wildcard_mentioned" in unique_triggers,
+        stream_wildcard_mentioned="stream_wildcard_mentioned" in unique_triggers,
         stream_email_notify="stream_email_notify" in unique_triggers,
         followed_topic_email_notify="followed_topic_email_notify" in unique_triggers,
-        followed_topic_wildcard_mentioned="followed_topic_wildcard_mentioned" in unique_triggers,
-        mention_count=triggers.count("mentioned") + triggers.count("wildcard_mentioned"),
+        stream_wildcard_mentioned_in_followed_topic="stream_wildcard_mentioned_in_followed_topic"
+        in unique_triggers,
         mentioned_user_group_name=mentioned_user_group_name,
     )
 
@@ -523,7 +525,10 @@ def do_send_missedmessage_events_reply_in_zulip(
                 {
                     m["message"].sender
                     for m in missed_messages
-                    if m["trigger"] == "mentioned" or m["trigger"] == "wildcard_mentioned"
+                    if m["trigger"] == NotificationTriggers.MENTION
+                    or m["trigger"] == NotificationTriggers.STREAM_WILDCARD_MENTION
+                    or m["trigger"]
+                    == NotificationTriggers.STREAM_WILDCARD_MENTION_IN_FOLLOWED_TOPIC
                 }
             )
         message = missed_messages[0]["message"]
@@ -639,11 +644,11 @@ def handle_missedmessage_emails(
 
     # We bucket messages by tuples that identify similar messages.
     # For streams it's recipient_id and topic.
-    # For PMs it's recipient id and sender.
+    # For direct messages it's recipient id and sender.
     messages_by_bucket: Dict[Tuple[int, Union[int, str]], List[Message]] = defaultdict(list)
     for msg in messages:
         if msg.recipient.type == Recipient.PERSONAL:
-            # For PM's group using (recipient, sender).
+            # For direct messages group using (recipient, sender).
             messages_by_bucket[(msg.recipient_id, msg.sender_id)].append(msg)
         else:
             messages_by_bucket[(msg.recipient_id, msg.topic_name().lower())].append(msg)
